@@ -30,8 +30,10 @@ from mimiry import MimiryClient
 client = MimiryClient(api_key="mky_your_key_here")
 
 # List available GPUs
-for gpu in client.list_instance_types():
-    print(f"{gpu['instance_type']} — ${gpu['price_per_hour']}/hr")
+currency = "eur"
+symbol = {"eur": "€", "usd": "$"}.get(currency, currency.upper())
+for gpu in client.list_instance_types(currency=currency):
+    print(f"{gpu['instance_type']} — {symbol}{gpu['price_per_hour']}/hr")
 
 # Check availability
 available = client.check_availability("1V100.6V")
@@ -112,7 +114,10 @@ result = client.submit_job_and_wait(
 ### Instance Types
 
 ```python
-# List all GPU types with pricing
+# List all GPU types with pricing (EUR default)
+gpus = client.list_instance_types()
+
+# List in USD
 gpus = client.list_instance_types(currency="usd")
 
 # Filter by provider

@@ -221,13 +221,13 @@ class MimiryClient:
 
     def list_instance_types(
         self,
-        currency: str = "usd",
+        currency: str = "eur",
         provider: Optional[str] = None,
     ) -> List[Dict]:
         """List available GPU instance types with pricing.
 
         Args:
-            currency: Price currency (default ``"usd"``).
+            currency: Price currency (default ``"eur"``).
             provider: Filter by provider slug (optional).
 
         Returns:
