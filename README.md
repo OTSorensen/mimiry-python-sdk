@@ -8,11 +8,17 @@ Python client for the [Mimiry GPU Cloud API](https://mimiryprimary.lovable.app).
 pip install mimiry
 ```
 
-Or install from source:
+Or install directly from GitHub:
 
 ```bash
-git clone https://github.com/mimiry-com/mimiryprimary
-cd public/sdk/python
+pip install git+https://github.com/OTSorensen/mimiry-python-sdk.git
+```
+
+Or clone and install:
+
+```bash
+git clone https://github.com/OTSorensen/mimiry-python-sdk
+cd mimiry-python-sdk
 pip install .
 ```
 
