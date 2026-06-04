@@ -1,12 +1,11 @@
-"""SDK port of scripts/run_quick_test.sh.
+"""Probe the GPU from inside a Mimiry function and return structured data.
 
-Same probe (nvidia-smi + ctypes libcuda init + cuDeviceGetCount), but the
-result comes back as a Python dict instead of stdout lines. Validates the
-entire v1 pipeline: auth, session lifecycle, function serialization,
-result return.
+Runs nvidia-smi, a ctypes libcuda init, and cuDeviceGetCount, returning the
+result as a Python dict instead of stdout lines. Exercises the full pipeline:
+auth, session lifecycle, function serialization, and result return.
 
 Run:
-    export MIMIRY_SSH_KEY=~/.ssh/mimiry_oliver_new
+    export MIMIRY_SSH_KEY=~/.ssh/mimiry   # your registered SSH key
     python examples/02_cuda_probe.py
 """
 
@@ -16,13 +15,12 @@ import mimiry
 
 
 @mimiry.function(
-    gpu="T4",
-    provider="gcp",  # T4 is GCP-only today; query /availability before assuming otherwise
+    # Uses default hardware; run `mimiry availability` to choose a GPU/provider.
     image="nvcr.io/nvidia/cuda:12.6.2-runtime-ubuntu24.04",  # Python 3.12 for cloudpickle compat
     timeout=900,
 )
 def cuda_probe() -> dict:
-    """Run the same probe as run_quick_test.sh and return structured data."""
+    """Probe the GPU and return structured data."""
     import ctypes
     import os
     import socket
@@ -76,7 +74,7 @@ def cuda_probe() -> dict:
 
 if __name__ == "__main__":
     t0 = time.monotonic()
-    print("Submitting probe to Mimiry T4 — expect ~2 min cold start...")
+    print("Submitting probe to Mimiry — expect ~2 min cold start...")
     out = cuda_probe.remote()
     elapsed = time.monotonic() - t0
 

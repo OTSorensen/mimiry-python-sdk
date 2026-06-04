@@ -1,7 +1,7 @@
 """Minimal Mimiry SDK example. Equivalent to a one-line nvidia-smi over GPU.
 
 Run:
-    export MIMIRY_SSH_KEY=~/.ssh/mimiry_oliver_new
+    export MIMIRY_SSH_KEY=~/.ssh/mimiry   # your registered SSH key
     python examples/01_hello.py
 """
 
@@ -9,8 +9,7 @@ import mimiry
 
 
 @mimiry.function(
-    gpu="T4",
-    provider="gcp",  # T4 is currently only offered on GCP — check /availability for current map
+    # Uses default hardware; run `mimiry availability` to choose a GPU/provider.
     image="nvcr.io/nvidia/cuda:12.6.2-runtime-ubuntu24.04",  # Python 3.12 for cloudpickle compat
 )
 def gpu_name() -> str:
