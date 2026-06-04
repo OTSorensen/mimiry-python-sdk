@@ -30,3 +30,5 @@ id_*
 # OS cruft
 .DS_Store
 Thumbs.db
+
+.build-venv/
