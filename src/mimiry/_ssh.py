@@ -152,7 +152,7 @@ def _ssh_cmd(
     raise SSHError(f"ssh '{remote_cmd[:60]}' failed: {last_err}")
 
 
-def open_control_channel(target: SshTarget, *, max_wait_seconds: int = 180) -> SshTarget:
+def open_control_channel(target: SshTarget, *, max_wait_seconds: int = 300) -> SshTarget:
     """Open a ControlMaster connection up front.
 
     Returns a target with the control socket attached. All subsequent
@@ -223,7 +223,7 @@ def close_control_channel(target: SshTarget) -> None:
         pass
 
 
-def wait_for_sshd(target: SshTarget, *, max_wait_seconds: int = 180) -> None:
+def wait_for_sshd(target: SshTarget, *, max_wait_seconds: int = 300) -> None:
     """Block until the container's sshd accepts a connection. Mimiry's ssh-proxy
     seems to accept connections almost immediately after ``state=started``, but
     we still need a quick probe to avoid racing the very first connect.

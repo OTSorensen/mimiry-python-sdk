@@ -17,10 +17,6 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
 ]
 
-[project.urls]
-Homepage = "https://mimiry.com"
-Repository = "https://github.com/OTSorensen/mimiry-python-sdk"
-Issues = "https://github.com/OTSorensen/mimiry-python-sdk/issues"
 dependencies = [
     "httpx>=0.27",
     "cloudpickle>=3.0",
@@ -31,6 +27,11 @@ dev = [
     "pytest>=8",
     "ruff>=0.5",
 ]
+
+[project.urls]
+Homepage = "https://mimiry.com"
+Repository = "https://github.com/OTSorensen/mimiry-python-sdk"
+Issues = "https://github.com/OTSorensen/mimiry-python-sdk/issues"
 
 [project.scripts]
 mimiry = "mimiry._cli:main"
