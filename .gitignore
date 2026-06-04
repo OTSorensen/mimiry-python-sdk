@@ -1,0 +1,32 @@
+# Build artifacts (regenerable via `python -m build`)
+dist/
+build/
+*.egg-info/
+
+# Python caches / bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# Secrets & credentials — NEVER commit
+*.pem
+*.key
+id_*
+*_rsa
+*_ed25519
+.env
+.env.*
+*.token
+
+# OS cruft
+.DS_Store
+Thumbs.db
