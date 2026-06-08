@@ -47,6 +47,21 @@ mimiry availability
 
 To filter to a single GPU family, add `--gpu-family <FAMILY>`.
 
+## Managing sessions
+
+Inspect and manage your compute sessions from the CLI:
+
+```bash
+mimiry sessions               # list recent sessions, newest first
+mimiry sessions --active      # only running / provisioning (i.e. still billing)
+mimiry session status <id>    # full detail for one session (--events N for history)
+mimiry session logs <id>      # container logs (--tail N, --timestamps)
+mimiry session terminate <id>
+```
+
+`mimiry session list` is the long form of `mimiry sessions`; add `--json` for
+machine-readable output.
+
 ## Python version
 
 Your local Python `major.minor` must match the Python inside your container

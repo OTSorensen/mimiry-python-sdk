@@ -4,6 +4,19 @@ All notable changes to the `mimiry` SDK are documented here. This project
 roughly follows [Keep a Changelog](https://keepachangelog.com/) and
 [Semantic Versioning](https://semver.org/).
 
+## [0.2.4] — 2026-06-08
+
+### Added
+- **Session management in the CLI.** Inspect and manage compute sessions
+  without the external `mirc` helper or raw curl:
+  - `mimiry sessions [--active] [--limit N] [--json]` (alias for `session list`)
+  - `mimiry session status <id> [--events N]`
+  - `mimiry session logs <id> [--tail N] [--timestamps]`
+  - `mimiry session terminate <id>`
+
+  These wrap client methods that already existed (`list_sessions`,
+  `get_session`, `terminate_session`, `get_logs`); no new API surface.
+
 ## [0.2.3] — 2026-06-08
 
 ### Fixed
