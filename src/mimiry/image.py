@@ -57,7 +57,15 @@ class Image:
             parts.append(f"apt-get update -qq && apt-get install -y -q {quoted} >/dev/null")
         if self._pip_packages:
             quoted = " ".join(shlex.quote(p) for p in self._pip_packages)
-            parts.append(f"pip install --quiet --no-input {quoted}")
+            # Invoke pip via ``python3 -m pip`` (a bare ``pip`` is often absent on
+            # minimal images, e.g. nvidia/cuda runtimes). ``--break-system-packages``
+            # is required on Ubuntu 24.04+ (PEP 668) and ignored by older pip — the
+            # bootstrap installs into a single-purpose container, so there's no
+            # system Python to protect. The bootstrap guarantees python3 + pip exist
+            # before this prefix runs (see build_bootstrap_script ordering).
+            parts.append(
+                f"python3 -m pip install --break-system-packages --quiet --no-input {quoted}"
+            )
         return " && ".join(parts)
 
     @property

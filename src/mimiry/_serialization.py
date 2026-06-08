@@ -163,8 +163,11 @@ def build_bootstrap_script(image_install_prefix: str = "") -> str:
     # this is a single-purpose container with a fresh root filesystem — there's
     # no system Python to break.
     parts: list[str] = ["set -e"]
-    if image_install_prefix:
-        parts.append(image_install_prefix)
+    # Ensure python3 + pip FIRST — before the image's install prefix, which often
+    # needs pip (e.g. Image.pip_install renders ``python3 -m pip install ...``).
+    # Running the prefix before this defeats the whole purpose: on a minimal image
+    # (nvidia/cuda runtime) the prefix's pip wouldn't exist yet and `set -e` would
+    # abort the container with exit 127 before anything else ran.
     parts.append(
         'if ! command -v python3 >/dev/null 2>&1; then '
         'DEBIAN_FRONTEND=noninteractive apt-get update -qq && '
@@ -180,6 +183,9 @@ def build_bootstrap_script(image_install_prefix: str = "") -> str:
         '--no-install-recommends python3-pip >/dev/null 2>&1; '
         'fi'
     )
+    # Now the image's own deps (apt/pip) — pip is guaranteed to exist by here.
+    if image_install_prefix:
+        parts.append(image_install_prefix)
     # Install cloudpickle eagerly in the shell so we can fail fast with apt-cache
     # already warm. ``--break-system-packages`` is harmless on older Ubuntu (pip
     # ignores it) and required on 24.04+.

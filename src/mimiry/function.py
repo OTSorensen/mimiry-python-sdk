@@ -31,6 +31,7 @@ from mimiry._serialization import (
     payload_env_var,
 )
 from mimiry._session import (
+    raise_if_ended_before_result,
     raise_if_failed,
     wait_for_ssh_ready,
     wait_for_started_or_terminal,
@@ -229,7 +230,9 @@ def _run_remote(fn: Callable, cfg: FunctionConfig, args: tuple, kwargs: dict) ->
             ran_payload, _ = wait_for_started_or_terminal(
                 client, session_id, run_config, on_state_change=lambda s: _log(f"state={s}")
             )
-            raise_if_failed(ran_payload, client=client)
+            # If the container ended before we could attach, surface its logs now
+            # instead of blundering into a 300s SSH timeout.
+            raise_if_ended_before_result(ran_payload, client=client)
 
             _log("waiting for ssh.host to be populated")
             ssh_ready = wait_for_ssh_ready(client, session_id, run_config)
@@ -276,7 +279,7 @@ def _run_remote(fn: Callable, cfg: FunctionConfig, args: tuple, kwargs: dict) ->
                 return parse_result(raw)
             except ResultParseError as e:
                 raise ResultParseError(f"{e} (session {session_id})") from e
-        except Exception as e:
+        except Exception:
             # Pull events for the failure narrative.
             try:
                 final = client.get_session(session_id, events_tail=-1)

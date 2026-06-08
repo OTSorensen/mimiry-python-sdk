@@ -20,7 +20,12 @@ from mimiry._auth import get_token
 from mimiry._availability import preflight_gpu_availability
 from mimiry._client import MimiryClient
 from mimiry._config import Config, get_config
-from mimiry._session import raise_if_failed, wait_for_ssh_ready, wait_for_started_or_terminal
+from mimiry._session import (
+    raise_if_ended_before_result,
+    raise_if_failed,
+    wait_for_ssh_ready,
+    wait_for_started_or_terminal,
+)
 from mimiry._ssh import (
     CONTAINER_HOLD_TIMEOUT_SECONDS,
     DONE_FLAG,
@@ -159,7 +164,9 @@ def run(
             ran_payload, _ = wait_for_started_or_terminal(
                 client, session_id, run_config, on_state_change=lambda s: _log(f"state={s}")
             )
-            raise_if_failed(ran_payload, client=client)
+            # Surface a premature container exit (bad image / failed install) with
+            # its logs, rather than timing out on SSH afterwards.
+            raise_if_ended_before_result(ran_payload, client=client)
 
             _log("waiting for ssh.host to be populated")
             ssh_ready = wait_for_ssh_ready(client, session_id, run_config)

@@ -197,3 +197,53 @@ def raise_if_failed(session_payload: dict, client: MimiryClient | None = None) -
             stop_reason=session_payload.get("stop_reason"),
             events=events,
         )
+
+
+def raise_if_ended_before_result(
+    session_payload: dict, client: MimiryClient | None = None
+) -> None:
+    """Raise SessionFailed if the session reached **any** terminal state at a point
+    where the container was expected to still be running (e.g. blocking on the
+    result/done flag).
+
+    In v1 the container writes its result and then blocks until the SDK signals
+    done, so reaching ``terminated``/``completed``/``failed`` at the just-started
+    checkpoint means the command exited prematurely — almost always a bootstrap
+    failure (bad image, failed pip install, etc.). We surface the tail of the
+    container logs so the caller sees *why* instead of timing out on SSH.
+    """
+    state = _extract_state(session_payload)
+    if state not in TERMINAL_STATES:
+        return
+
+    session_id = session_payload.get("id", "?")
+    stop_reason = session_payload.get("stop_reason")
+
+    tail = ""
+    events = None
+    if client is not None:
+        try:
+            resp = client.get_logs(session_id, tail=50)
+            if resp.get("_status") == 200:
+                tail = (resp.get("logs") or "").strip()
+        except Exception:
+            pass
+        try:
+            events = fetch_events(client, session_id)
+        except Exception:
+            events = None
+
+    msg = (
+        f"session {session_id} ended in state={state} (stop_reason={stop_reason}) "
+        f"before the container produced a result — the command likely failed during "
+        f"startup"
+    )
+    if tail:
+        msg += f". Last container logs:\n{tail}"
+    raise SessionFailed(
+        msg,
+        session_id=session_id,
+        state=state,
+        stop_reason=stop_reason,
+        events=events,
+    )
