@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from mimiry._auth import get_token
+from mimiry._availability import preflight_gpu_availability
 from mimiry._client import MimiryClient
 from mimiry._config import get_config
 from mimiry._serialization import (
@@ -215,6 +216,11 @@ def _run_remote(fn: Callable, cfg: FunctionConfig, args: tuple, kwargs: dict) ->
             print(f"[mimiry] {msg}", file=sys.stderr, flush=True)
 
     with MimiryClient(token) as client:
+        # Fail fast on an impossible gpu/provider combo before paying for a
+        # provisioning round-trip. Best-effort — a flaky availability endpoint
+        # won't block submission. See _availability.py.
+        preflight_gpu_availability(client, cfg.gpu, cfg.provider, cfg.location)
+
         session = client.create_session(session_payload)
         session_id = session["id"]
         _log(f"session {session_id} submitted")

@@ -17,6 +17,7 @@ from datetime import datetime
 from pathlib import Path
 
 from mimiry._auth import get_token
+from mimiry._availability import preflight_gpu_availability
 from mimiry._client import MimiryClient
 from mimiry._config import Config, get_config
 from mimiry._session import raise_if_failed, wait_for_ssh_ready, wait_for_started_or_terminal
@@ -146,6 +147,10 @@ def run(
             print(f"[mimiry] {msg}", file=sys.stderr, flush=True)
 
     with MimiryClient(token) as client:
+        # Fail fast on an impossible gpu/provider combo before provisioning.
+        # Best-effort — see _availability.py.
+        preflight_gpu_availability(client, gpu, provider, location)
+
         session = client.create_session(payload)
         session_id = session["id"]
         _log(f"session {session_id} submitted")
