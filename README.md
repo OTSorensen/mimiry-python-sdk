@@ -19,7 +19,7 @@ pip install -e .
 
 ## Auth
 
-Running jobs requires a Mimiry account. The SDK authenticates with SSH-JWT — the same SSH key you register on your account at the [Mimiry portal](https://softlaunch.mimiry.com). The fastest way to get set up is the interactive wizard, which generates a key (if needed), walks you through registering it in the portal, writes `MIMIRY_SSH_KEY` to your shell profile, and verifies the connection:
+Running jobs requires a Mimiry account. The SDK authenticates with SSH-JWT — the same SSH key you register on your account at the [Mimiry portal](https://softlaunch.mimiry.com). The fastest way to get set up is the interactive wizard, which generates a key (if needed), walks you through registering it in the portal, saves the key path to `~/.config/mimiry/config.toml` so the SDK works right away (and in every future shell, no restart needed), and verifies the connection. It also exports `MIMIRY_SSH_KEY` to your shell profile for `curl`/shell use:
 
 ```bash
 mimiry setup   # alias: mimiry init
