@@ -4,9 +4,10 @@ A one-time interactive wizard for Mimiry's SSH-JWT auth (there is no API-key
 flow). The wizard:
 
 1. Generates an ed25519 key at ``~/.ssh/mimiry`` if one doesn't already exist.
-2. Shows the public key and opens the portal so the user can register it
-   (there is no key-registration API — registration is manual in the portal).
-3. Writes ``MIMIRY_SSH_KEY`` to the user's shell rc file (with confirmation).
+2. Shows the public key so the user can register it in the portal (there is no
+   key-registration API — registration is manual).
+3. Saves the key path to the SDK config file so the SDK works immediately, and
+   also exports ``MIMIRY_SSH_KEY`` to the user's shell rc for shell/curl use.
 4. Runs a balance check to verify the whole chain end-to-end.
 
 Everything here is deliberately dependency-free (stdlib only) and degrades
@@ -19,12 +20,11 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
-import webbrowser
 from pathlib import Path
 
 from mimiry._auth import get_token
 from mimiry._client import MimiryClient
-from mimiry._config import DEFAULT_API_BASE
+from mimiry._config import DEFAULT_API_BASE, save_key_path
 
 DEFAULT_KEY_PATH = Path("~/.ssh/mimiry").expanduser()
 
@@ -103,12 +103,10 @@ def _register_key(pub_path: Path, api_base: str) -> None:
     print("  (Mimiry has no key-registration API yet — this step is manual.)")
 
     if _is_interactive():
-        if _confirm("\n  Open the portal in your browser now?", default=True):
-            try:
-                webbrowser.open(portal_url)
-            except Exception:
-                pass  # headless / no browser — the URL is printed above anyway
-        _prompt("\n  Press Enter once the key is registered to continue...")
+        # Note: we intentionally do not auto-open a browser. `webbrowser.open`
+        # shells out to xdg-open on Linux/WSL, which errors noisily (or hangs)
+        # when no opener is installed. The URL above is copy-pasteable.
+        _prompt("\n  Open the URL above, then press Enter once the key is registered...")
 
 
 # ────────────────────────── step 3: write shell rc ──────────────────────────
@@ -150,8 +148,8 @@ def _write_rc(key_path: Path) -> None:
     needs_nl = existing and not existing.endswith("\n")
     with rc_path.open("a") as fh:
         fh.write(("\n" if needs_nl else "") + f"\n{_RC_MARKER}\n{export_line}\n")
-    print(f"  Wrote MIMIRY_SSH_KEY to {rc_path}.")
-    print(f"  Restart your shell or run:  source {rc_path}")
+    print(f"  Also exported MIMIRY_SSH_KEY in {rc_path} (for shell/curl use).")
+    print("  That activates in new shells — no restart needed for the SDK itself.")
 
 
 # ────────────────────────── step 4: verify ──────────────────────────
@@ -195,10 +193,15 @@ def run_setup_wizard(
     _step(2, "Register your key in the portal")
     _register_key(pub, api_base)
 
-    _step(3, "Persist MIMIRY_SSH_KEY")
-    # Make the key visible to this process so the verification step works even
-    # before the user reloads their shell.
+    _step(3, "Save configuration")
+    # Primary mechanism: write the key path to the SDK config file. The SDK
+    # reads this directly, so it works in *this* shell and every future one
+    # without a restart. (Make it visible to this process too, for the verify
+    # step below.)
     os.environ["MIMIRY_SSH_KEY"] = str(priv)
+    cfg_file = save_key_path(priv)
+    print(f"  Saved key path to {cfg_file} (chmod 600) — the SDK uses this immediately.")
+    # Secondary convenience: export the env var for shell/curl workflows too.
     _write_rc(priv)
 
     _step(4, "Verify")
