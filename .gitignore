@@ -27,6 +27,24 @@ id_*
 .env.*
 *.token
 
+# Internal / scratch — NEVER publish (added 2026-06 after public-repo audit)
+development-files/
+internal/
+private/
+scratch/
+notes/
+drafts/
+*-internal.*
+*-private.*
+*.internal.*
+*.private.*
+*.draft
+*.draft.*
+# Doc-leak guards: roadmap / architecture / strategy notes kept out of the public package
+**/api-roadmap.md
+**/*-roadmap.md
+**/internal-*.md
+
 # OS cruft
 .DS_Store
 Thumbs.db
