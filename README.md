@@ -45,22 +45,54 @@ Always check what's currently available before selecting hardware:
 mimiry availability
 ```
 
-To filter to a single GPU family, add `--gpu-family <FAMILY>`.
+Filter with `--gpu-family T4`, `--provider gcp`, `--location europe-west4-a`,
+`--min-vram 16`, and/or `--available-only`.
 
 ## Managing sessions
 
-Inspect and manage your compute sessions from the CLI:
+Run and manage GPU sessions entirely from the CLI — no Python required:
 
 ```bash
-mimiry sessions               # list recent sessions, newest first
-mimiry sessions --active      # only running / provisioning (i.e. still billing)
-mimiry session status <id>    # full detail for one session (--events N for history)
-mimiry session logs <id>      # container logs (--tail N, --timestamps)
+# Launch a job (omit --command for an interactive box; --wait blocks until it starts)
+mimiry session create --image nvcr.io/nvidia/cuda:12.6.2-runtime-ubuntu24.04 \
+    --gpu T4 --provider gcp --command "nvidia-smi" --wait
+
+mimiry sessions                 # list recent sessions, newest first
+mimiry sessions --active        # only running / provisioning (i.e. still billing)
+mimiry session status <id>      # full detail (--events N for history, --wait to block until done)
+mimiry session logs <id>        # container logs (--tail N, --timestamps, --follow to stream)
+mimiry session ssh <id>         # interactive shell into a running session
 mimiry session terminate <id>
 ```
 
 `mimiry session list` is the long form of `mimiry sessions`; add `--json` for
-machine-readable output.
+machine-readable output. `session create` also accepts `--env KEY=VAL`,
+`--volume NAME:MOUNT`, `--gpu-count`, and
+`--auto-terminate {never,on_complete,on_success}`.
+
+## Volumes
+
+Persistent block storage that survives session termination:
+
+```bash
+mimiry volume create --name data --size-gb 100
+mimiry volume list                       # hides deleted; --all to include them
+mimiry volume status <id>
+mimiry volume extend <id> --size-gb 200  # grow only (cannot shrink)
+mimiry volume delete <id>
+```
+
+Attach one at launch: `mimiry session create … --volume data:/mnt/data`.
+
+## Account
+
+```bash
+mimiry balance        # remaining credit
+mimiry quota          # usage limits
+mimiry transactions   # credit/debit history
+mimiry whoami         # verify auth end-to-end
+mimiry config         # show resolved key path + API base (no network)
+```
 
 ## Python version
 

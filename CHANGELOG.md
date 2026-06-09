@@ -4,18 +4,28 @@ All notable changes to the `mimiry` SDK are documented here. This project
 roughly follows [Keep a Changelog](https://keepachangelog.com/) and
 [Semantic Versioning](https://semver.org/).
 
-## [0.2.4] — 2026-06-08
+## [0.3.0] — 2026-06-08
+
+A major CLI expansion: the `mimiry` CLI now covers the full session lifecycle
+plus volumes and account insight — enough to replace the external `mirc` helper
+for day-to-day use. (Supersedes the never-released 0.2.4, which introduced the
+first read-only session commands.)
 
 ### Added
-- **Session management in the CLI.** Inspect and manage compute sessions
-  without the external `mirc` helper or raw curl:
-  - `mimiry sessions [--active] [--limit N] [--json]` (alias for `session list`)
-  - `mimiry session status <id> [--events N]`
-  - `mimiry session logs <id> [--tail N] [--timestamps]`
+- **Full session lifecycle in the CLI:**
+  - `mimiry session create --image … --gpu … [--provider --location --command --env KEY=VAL --volume NAME:MOUNT --auto-terminate … --no-ssh --wait]` — launch a GPU/shell job
+  - `mimiry sessions [--active] [--limit N] [--json]` / `mimiry session list`
+  - `mimiry session status <id> [--events N] [--wait]`
+  - `mimiry session logs <id> [--tail N] [--timestamps] [--follow]` — `--follow` streams until the session ends
+  - `mimiry session ssh <id>` — interactive shell into a running session
   - `mimiry session terminate <id>`
+- **Volume management:** `mimiry volume create|list|status|extend|delete`, backed by new client methods (`create_volume`, `list_volumes`, `get_volume`, `extend_volume`, `delete_volume`). Attach at launch with `mimiry session create --volume NAME:MOUNT`.
+- **Account/insight:** `mimiry transactions` (credit history), `mimiry whoami` (verify auth + balance), `mimiry config` (resolved settings, no network).
+- **Richer `availability` filters:** `--provider`, `--location`, `--min-vram`, `--available-only` (alongside `--gpu-family`).
+- `mimiry --version`.
 
-  These wrap client methods that already existed (`list_sessions`,
-  `get_session`, `terminate_session`, `get_logs`); no new API surface.
+### Changed
+- Scriptability: `session status` exits non-zero on `failed`/`provision_failed`/`stopped`; `--json` available on list commands.
 
 ## [0.2.3] — 2026-06-08
 

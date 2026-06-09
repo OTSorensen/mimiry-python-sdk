@@ -120,3 +120,35 @@ class MimiryClient:
                 body = {"message": resp.text}
             return {"_status": 409, **body}
         return {"_status": 200, **self._json_or_raise(resp)}
+
+    # ────────── volumes ──────────
+
+    def create_volume(self, payload: dict) -> dict:
+        """POST /volumes. ``payload``: ``{name, size_gb, [provider, location]}``."""
+        return self._json_or_raise(self._request("POST", "/volumes", json=payload))
+
+    def list_volumes(self, **params: Any) -> list[dict]:
+        body = self._json_or_raise(self._request("GET", "/volumes", params=params))
+        return body.get("volumes", body) if isinstance(body, dict) else body
+
+    def get_volume(self, volume_id: str) -> dict:
+        return self._json_or_raise(self._request("GET", f"/volumes/{volume_id}"))
+
+    def extend_volume(self, volume_id: str, size_gb: int) -> dict:
+        """PATCH /volumes/{id} with a larger ``size_gb`` (volumes can't shrink)."""
+        return self._json_or_raise(
+            self._request("PATCH", f"/volumes/{volume_id}", json={"size_gb": size_gb})
+        )
+
+    def delete_volume(self, volume_id: str) -> dict | None:
+        """DELETE /volumes/{id}. Returns the body, or None on 202/204."""
+        resp = self._request("DELETE", f"/volumes/{volume_id}")
+        if resp.status_code in (202, 204):
+            return None
+        return self._json_or_raise(resp)
+
+    # ────────── transactions ──────────
+
+    def get_transactions(self, **params: Any) -> Any:
+        """GET /transactions — account credit/debit history."""
+        return self._json_or_raise(self._request("GET", "/transactions", params=params))
