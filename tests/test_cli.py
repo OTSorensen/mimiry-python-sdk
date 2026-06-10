@@ -330,3 +330,14 @@ def test_volume_without_subcommand_errors():
 def test_volume_create_requires_size():
     with pytest.raises(SystemExit):
         cli.main(["volume", "create", "--name", "x"])  # missing --size-gb
+
+
+def test_help_subcommand_prints_full_help(capsys):
+    assert cli.main(["help"]) == 0
+    out = capsys.readouterr().out
+    assert "usage: mimiry" in out and "session" in out and "volume" in out
+
+
+def test_bare_invocation_prints_help(capsys):
+    assert cli.main([]) == 0
+    assert "usage: mimiry" in capsys.readouterr().out

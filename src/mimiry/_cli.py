@@ -409,7 +409,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--version", action="version", version=f"mimiry {__version__}")
     parser.add_argument("--ssh-key", help="Path to SSH private key (overrides MIMIRY_SSH_KEY).")
     parser.add_argument("--api-base", help="API base URL (default: softlaunch.mimiry.com).")
-    subs = parser.add_subparsers(dest="cmd", required=True)
+    subs = parser.add_subparsers(dest="cmd")
+
+    def _cmd_help(_a: argparse.Namespace) -> int:
+        parser.print_help()
+        return 0
 
     # account
     subs.add_parser("balance", help="Show account balance.").set_defaults(func=cmd_balance)
@@ -479,6 +483,9 @@ def main(argv: list[str] | None = None) -> int:
     # sessions alias
     _add_list_args(subs.add_parser("sessions", help="Alias for `session list`."))
 
+    # `mimiry help` as a friendly alias for `mimiry --help`
+    subs.add_parser("help", help="Show this help message.").set_defaults(func=_cmd_help)
+
     # volume group
     vol = subs.add_parser("volume", help="Manage persistent block volumes.")
     vol_subs = vol.add_subparsers(dest="volume_cmd", required=True)
@@ -509,6 +516,11 @@ def main(argv: list[str] | None = None) -> int:
     v_delete.set_defaults(func=cmd_volume_delete)
 
     args = parser.parse_args(argv)
+
+    # Bare `mimiry` (no subcommand) prints full help instead of erroring.
+    if not getattr(args, "func", None):
+        parser.print_help()
+        return 0
 
     if args.ssh_key or args.api_base:
         configure(ssh_key_path=args.ssh_key, api_base=args.api_base)

@@ -3,7 +3,7 @@
 **Status:** alpha — early access
 **Backend:** softlaunch.mimiry.com (beta)
 
-Python-native interface for running serverless cloud GPU jobs on Mimiry, with full control over locality and providers.
+Python-native interface for running serverless cloud GPU jobs on Mimiry, with full control over locality and providers — a decorator-based SDK plus a full-featured CLI for managing sessions and volumes.
 
 ## Install
 
@@ -140,12 +140,21 @@ print(result.logs)
 
 ## What works in this version
 
+**Python SDK**
+
 - `@mimiry.function(gpu=..., image=...)` decorator
 - `.remote(*args, **kwargs)` — sync call, returns the function's return value
 - `.map(iterable)` — runs the function over an iterable, sequentially
 - `Image.from_registry(uri).pip_install(...).apt_install(...)` — basic image customisation (installs at container start; no real Dockerfile build)
 - `mimiry.run(image, gpu, command)` — raw bash entrypoint
 - SSH-JWT auth via existing key
+
+**CLI** (`mimiry --help`)
+
+- Sessions: `session create` / `list` / `status` / `logs [--follow]` / `ssh` / `terminate`
+- Volumes: `volume create` / `list` / `status` / `extend` / `delete`
+- Account: `balance`, `quota`, `transactions`, `whoami`, `config`
+- `availability` with `--gpu-family` / `--provider` / `--location` / `--min-vram` / `--available-only`
 
 ## Examples
 
