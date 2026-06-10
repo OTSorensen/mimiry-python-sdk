@@ -35,6 +35,18 @@ export MIMIRY_SSH_KEY=~/.ssh/mimiry
 
 Or pass `ssh_key_path=` explicitly to `mimiry.configure()`.
 
+## CLI
+
+Installing the package adds the `mimiry` command. To see every command and its
+options:
+
+```bash
+mimiry --help            # list all commands (also: mimiry help)
+mimiry <command> --help  # options for one command, e.g. `mimiry session create --help`
+```
+
+The sections below cover the common ones; everything is discoverable via `--help`.
+
 ## GPU types and providers
 
 Mimiry sources GPUs from both local datacenters and cloud providers across Europe and the US, spanning entry-level cards up to the latest high-end accelerators. You control locality and hardware requirements, as well as which providers to use.
