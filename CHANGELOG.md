@@ -4,6 +4,12 @@ All notable changes to the `mimiry` SDK are documented here. This project
 roughly follows [Keep a Changelog](https://keepachangelog.com/) and
 [Semantic Versioning](https://semver.org/).
 
+## [0.3.2] — 2026-06-10
+
+### Documentation
+- README: simplify the "Managing sessions" intro wording (drop the inaccurate
+  "no Python required" — the CLI is itself a Python package).
+
 ## [0.3.1] — 2026-06-10
 
 ### Added

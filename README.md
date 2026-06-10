@@ -62,7 +62,7 @@ Filter with `--gpu-family T4`, `--provider gcp`, `--location europe-west4-a`,
 
 ## Managing sessions
 
-Run and manage GPU sessions entirely from the CLI — no Python required:
+Run and manage GPU sessions entirely from the CLI:
 
 ```bash
 # Launch a job (omit --command for an interactive box; --wait blocks until it starts)
