@@ -4,6 +4,17 @@ All notable changes to the `mimiry` SDK are documented here. This project
 roughly follows [Keep a Changelog](https://keepachangelog.com/) and
 [Semantic Versioning](https://semver.org/).
 
+## [0.3.1] — 2026-06-10
+
+### Added
+- `mimiry help` as a friendly alias for `mimiry --help`; running bare `mimiry`
+  now prints full help instead of an "invalid choice" error.
+
+### Documentation
+- README: add a top-level **CLI** section (between Auth and GPU types) that
+  points users at `mimiry --help` / `mimiry <command> --help` for command
+  discovery, and document the CLI in the "What works" summary and the tagline.
+
 ## [0.3.0] — 2026-06-08
 
 A major CLI expansion: the `mimiry` CLI now covers the full session lifecycle
