@@ -100,7 +100,8 @@ class MimiryClient:
         Returns a dict like ``{"logs": "<text>"}`` on 200, or
         ``{"retry_after_seconds": N}`` on 503 (container still booting).
 
-        Caller is responsible for retry/backoff loops — see :func:`mimiry._session.wait_for_marker`.
+        Caller is responsible for retry/backoff loops — see ``_follow_logs`` in
+        ``mimiry._cli`` for the 503 back-off pattern.
         """
         resp = self._request(
             "GET",

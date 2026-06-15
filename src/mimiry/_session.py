@@ -75,69 +75,6 @@ def wait_for_started_or_terminal(
         time.sleep(config.poll_interval_seconds)
 
 
-def wait_for_marker(
-    client: MimiryClient,
-    session_id: str,
-    marker: str,
-    config: Config,
-    *,
-    state_at_start: str = RUNNING_STATE,
-    log_tail: int = 1000,
-) -> tuple[str, dict, dict[str, float]]:
-    """Poll logs until ``marker`` appears OR the session reaches a terminal state.
-
-    Returns ``(logs, final_session_payload, timings)``. ``logs`` may not contain
-    ``marker`` if the session terminated before the marker was emitted — caller
-    must check.
-    """
-    started_at = time.monotonic()
-    deadline = started_at + config.timeout_seconds
-    last_state = state_at_start
-    last_logs = ""
-    final_payload: dict = {}
-    timings: dict[str, float] = {}
-
-    while True:
-        if time.monotonic() > deadline:
-            raise SessionTimeout(
-                f"session {session_id} did not emit marker within {config.timeout_seconds}s"
-            )
-
-        # Try to grab logs. If 503, the container is still pulling — back off.
-        log_resp = client.get_logs(session_id, tail=log_tail)
-        if log_resp.get("_status") == 200:
-            last_logs = log_resp.get("logs", "") or ""
-            if marker in last_logs:
-                final_payload = client.get_session(session_id)
-                timings["marker_found"] = time.monotonic() - started_at
-                return last_logs, final_payload, timings
-        elif log_resp.get("_status") == 503:
-            wait = float(log_resp.get("retry_after_seconds", config.log_poll_interval_seconds))
-            time.sleep(min(wait, 30))
-            continue
-        elif log_resp.get("_status") == 409:
-            # Container not running anymore — session probably terminated. Fall through to state
-            # check below to confirm.
-            pass
-
-        # Check state — exit when terminal.
-        payload = client.get_session(session_id)
-        state = _extract_state(payload)
-        if state != last_state:
-            timings[state] = time.monotonic() - started_at
-            last_state = state
-
-        if state in TERMINAL_STATES:
-            # One last-ditch log fetch (sometimes the marker arrives in the same tick as
-            # auto-terminate). If it 409s, we've lost the logs window — return what we have.
-            final_resp = client.get_logs(session_id, tail=log_tail)
-            if final_resp.get("_status") == 200:
-                last_logs = final_resp.get("logs", "") or last_logs
-            return last_logs, payload, timings
-
-        time.sleep(config.log_poll_interval_seconds)
-
-
 def wait_for_ssh_ready(
     client: MimiryClient,
     session_id: str,
