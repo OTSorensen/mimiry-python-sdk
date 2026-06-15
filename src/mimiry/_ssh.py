@@ -2,31 +2,22 @@
 
 # Why SSH
 
-The softlaunch ``/sessions/{id}/logs`` endpoint does not return container
-stdout — it returns the SSH proxy's login-session banner only (re-confirmed
-on 2026-05-31 with a known-good probe). Container stdout is not surfaced by
-the public API today. Until a real result-storage path exists, the SDK
-retrieves function return values out-of-band: the container writes the
-serialized return value to a known path, blocks on a "done" flag, and the
-SDK SSHes in to pull the file and release the container.
+The SDK retrieves function return values out-of-band: the container writes the
+serialized return value to a known path, blocks on a "done" flag, and the SDK
+connects over SSH to pull the file and release the container.
 
-This module is intentionally thin — it shells out to the system ``ssh``
-binary rather than depending on Paramiko or asyncssh. Every softlaunch user
-already has OpenSSH installed (it's a prereq for the existing CLI flow),
-and shelling out keeps the trust surface small.
+This module is intentionally thin — it shells out to the system ``ssh`` binary
+rather than depending on Paramiko or asyncssh. OpenSSH is already a prerequisite
+for the SDK, and shelling out keeps the dependency surface small.
 
 # Connection multiplexing
 
 The container's bootstrap installs Python+pip+cloudpickle on the fly, which
 saturates the single-vCPU instance for ~60–120 s and starves new SSH
-handshakes (observed empirically: a fresh ``ssh`` invocation can stall past
-a 15 s timeout while the install runs). We work around this by opening one
-ControlMaster connection up front and reusing it via ``ControlPath`` for
-every subsequent command. Pre-fork handshakes happen once; subsequent
-commands ride the existing channel without re-negotiating.
-
-The trade-off is that we route every result through ``mimiry-ssh-proxy``.
-v2's dedicated result store will replace this entirely.
+handshakes (observed empirically: a fresh ``ssh`` invocation can stall past a
+15 s timeout while the install runs). We open one ControlMaster connection up
+front and reuse it via ``ControlPath`` for every subsequent command, so the
+handshake happens once and later commands ride the existing channel.
 """
 
 from __future__ import annotations

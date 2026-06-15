@@ -1,13 +1,8 @@
 """``@mimiry.function`` decorator and the ``Function`` runtime class.
 
 v1 contract: every ``.remote()`` call creates a fresh Mimiry session, runs the
-user's function inside it, and SSHes in to fetch the serialized return value.
-Cold-start is ~2 minutes (measured 2026-05-19). There is no warm pool in v1
-— see PROGRESS.md Step 7 for the v2/backend plan.
-
-Why SSH and not the /logs endpoint: see ``_ssh.py`` docstring. tl;dr the
-softlaunch logs endpoint currently doesn't stream stdout in any usable
-window. v2 with a proper result store will retire the SSH path.
+user's function inside it, and connects over SSH to fetch the serialized return
+value. Cold-start is ~2 minutes. There is no warm pool in v1.
 """
 
 from __future__ import annotations

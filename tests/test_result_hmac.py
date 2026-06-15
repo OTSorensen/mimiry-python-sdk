@@ -59,14 +59,14 @@ def test_valid_envelope_verifies_and_round_trips():
 # ────────────────────────── rejection paths ──────────────────────────
 
 
-def test_tampered_payload_is_rejected_before_unpickle():
+def test_modified_payload_is_rejected():
     key = new_result_hmac_key()
     envelope, _ = _make_envelope("benign", key)
     sig, _, body = envelope.partition("\n")
-    # Flip one character of the (still-valid-base64) body; HMAC must catch it.
-    forged_body = ("A" if body[0] != "A" else "B") + body[1:]
+    # Flip one character of the (still-valid-base64) body; the HMAC must not match.
+    altered_body = ("A" if body[0] != "A" else "B") + body[1:]
     with pytest.raises(ResultIntegrityError):
-        verify_result_envelope(f"{sig}\n{forged_body}", key)
+        verify_result_envelope(f"{sig}\n{altered_body}", key)
 
 
 def test_wrong_key_is_rejected():
@@ -75,7 +75,7 @@ def test_wrong_key_is_rejected():
         verify_result_envelope(envelope, new_result_hmac_key())
 
 
-def test_forged_signature_is_rejected():
+def test_bad_signature_is_rejected():
     key = new_result_hmac_key()
     _, body = _make_envelope("x", key)
     with pytest.raises(ResultIntegrityError):
