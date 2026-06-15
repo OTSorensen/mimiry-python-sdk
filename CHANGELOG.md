@@ -4,6 +4,36 @@ All notable changes to the `mimiry` SDK are documented here. This project
 roughly follows [Keep a Changelog](https://keepachangelog.com/) and
 [Semantic Versioning](https://semver.org/).
 
+## [0.3.3] — 2026-06-15
+
+### Fixed
+- **Default `gpu="T4"` works again.** The compute API now accepts only concrete
+  GPU catalog names (e.g. `T4_16G_PCIe`) and rejects family aliases such as `T4`
+  at session-create. `@mimiry.function`, `mimiry.run`, and the CLI now resolve a
+  GPU family alias to the single available concrete name before submitting; an
+  ambiguous family (several available variants) raises an actionable error
+  listing them instead of a backend 400. Falls back to the original value when
+  availability can't be consulted (unchanged best-effort behaviour).
+
+### Added
+- **Integrity-checked remote results.** A function's return value now travels in
+  an HMAC-signed envelope that the SDK verifies before deserializing it; a
+  payload whose signature doesn't match is rejected with the new
+  `ResultIntegrityError` (exported from the top-level package). `ResultParseError`
+  continues to signal a verified-but-unparseable payload.
+- **Payload size guard.** `pack_call` now warns when the encoded call payload
+  exceeds the 256 KB soft limit (it is transmitted as a container environment
+  variable, which has practical size limits) and points to volumes/buckets for
+  large data.
+
+### Changed
+- The distribution name declared in `pyproject.toml` is now lowercase `mimiry`,
+  matching the import package and the published PyPI project. No functional
+  change.
+
+### Removed
+- Dead `wait_for_marker` log-polling helper (was defined but unused).
+
 ## [0.3.2] — 2026-06-10
 
 ### Documentation

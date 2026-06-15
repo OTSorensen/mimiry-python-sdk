@@ -17,7 +17,7 @@ from mimiry.function import function, Function
 from mimiry.image import Image
 from mimiry.run import run
 
-__version__ = "0.3.2"
+__version__ = "0.3.3"
 
 __all__ = [
     "__version__",
