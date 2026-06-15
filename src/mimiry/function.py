@@ -217,9 +217,11 @@ def _run_remote(fn: Callable, cfg: FunctionConfig, args: tuple, kwargs: dict) ->
 
     with MimiryClient(token) as client:
         # Fail fast on an impossible gpu/provider combo before paying for a
-        # provisioning round-trip. Best-effort — a flaky availability endpoint
-        # won't block submission. See _availability.py.
-        preflight_gpu_availability(client, cfg.gpu, cfg.provider, cfg.location)
+        # provisioning round-trip, and resolve a GPU family alias (e.g. "T4") to
+        # the concrete catalog name the API requires. Best-effort — a flaky
+        # availability endpoint won't block submission. See _availability.py.
+        resolved_gpu = preflight_gpu_availability(client, cfg.gpu, cfg.provider, cfg.location)
+        session_payload["gpu"]["types"] = [resolved_gpu]
 
         session = client.create_session(session_payload)
         session_id = session["id"]

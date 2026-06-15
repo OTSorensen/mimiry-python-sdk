@@ -26,6 +26,7 @@ from datetime import datetime
 
 from mimiry import __version__
 from mimiry._auth import get_token
+from mimiry._availability import preflight_gpu_availability
 from mimiry._client import MimiryClient
 from mimiry._config import configure, get_config
 from mimiry._session import TERMINAL_STATES, _extract_state
@@ -214,6 +215,10 @@ def cmd_session_ssh(args: argparse.Namespace) -> int:
 def cmd_session_create(args: argparse.Namespace) -> int:
     payload = _build_create_payload(args)
     with _client() as c:
+        # Resolve a GPU family alias (e.g. "T4") to the concrete catalog name
+        # the API requires, and fail fast on an impossible combo. Best-effort.
+        resolved_gpu = preflight_gpu_availability(c, args.gpu, args.provider, args.location)
+        payload["gpu"]["types"] = [resolved_gpu]
         session = c.create_session(payload)
         sid = session.get("id", "?")
         print(f"Created session {sid} (state={session.get('state', '?')}).")

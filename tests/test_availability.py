@@ -1,4 +1,4 @@
-"""Tests for pre-create GPU/provider/location validation against /availability."""
+"""Tests for pre-create GPU validation + family-alias resolution against /availability."""
 
 from __future__ import annotations
 
@@ -7,11 +7,12 @@ import pytest
 from mimiry._availability import check_gpu_offered, preflight_gpu_availability
 from mimiry.exceptions import SessionError
 
-# Mirrors the shape of GET /api/compute/v1/availability (abbreviated).
+# Mirrors the shape of GET /api/compute/v1/availability (abbreviated). Note the
+# catalog exposes concrete names (e.g. "T4_16G_PCIe") with a "family" alias.
 SAMPLE = {
     "gpu_models": [
         {
-            "name": "T4", "family": "T4", "available": True, "currency": "EUR",
+            "name": "T4_16G_PCIe", "family": "T4", "available": True, "currency": "EUR",
             "providers": [{"provider": "gcp", "hourly_rate": 0.36, "locations": ["europe-west4-a"]}],
         },
         {
@@ -22,31 +23,57 @@ SAMPLE = {
             ],
         },
         {
-            "name": "A100", "family": "A100", "available": False, "currency": "EUR",
+            "name": "A100_40G_SXM", "family": "A100", "available": False, "currency": "EUR",
             "providers": [{"provider": "verda", "hourly_rate": 1.2, "locations": ["FIN-01"]}],
+        },
+        # Two available V100 variants → the family alias "V100" is ambiguous.
+        {
+            "name": "V100_16G", "family": "V100", "available": True, "currency": "EUR",
+            "providers": [{"provider": "verda", "hourly_rate": 0.8, "locations": ["FIN-01"]}],
+        },
+        {
+            "name": "V100_32G", "family": "V100", "available": True, "currency": "EUR",
+            "providers": [{"provider": "verda", "hourly_rate": 0.9, "locations": ["FIN-01"]}],
         },
     ]
 }
 MODELS = SAMPLE["gpu_models"]
 
 
-# ────────────────────────── check_gpu_offered (pure) ──────────────────────────
+# ────────────────────────── family-alias resolution ──────────────────────────
 
 
-def test_ok_when_gpu_and_provider_match():
-    check_gpu_offered(MODELS, "T4", "gcp", None)  # no raise
+def test_resolves_family_alias_to_concrete_name():
+    assert check_gpu_offered(MODELS, "T4", "gcp", None) == "T4_16G_PCIe"
 
 
-def test_ok_when_no_provider_hint():
-    check_gpu_offered(MODELS, "T4", None, None)  # available somewhere → fine
+def test_resolves_family_alias_without_provider_hint():
+    assert check_gpu_offered(MODELS, "T4", None, None) == "T4_16G_PCIe"
+
+
+def test_concrete_name_passes_through():
+    assert check_gpu_offered(MODELS, "T4_16G_PCIe", "gcp", None) == "T4_16G_PCIe"
+
+
+def test_family_resolves_under_each_provider():
+    # "H100" is a family; the offered model name is "H100_SXM".
+    assert check_gpu_offered(MODELS, "H100", "acme", None) == "H100_SXM"
+    assert check_gpu_offered(MODELS, "H100_SXM", "verda", None) == "H100_SXM"
+
+
+def test_ambiguous_family_raises_with_options():
+    with pytest.raises(SessionError, match="multiple available types") as exc:
+        check_gpu_offered(MODELS, "V100", None, None)
+    assert "V100_16G" in str(exc.value) and "V100_32G" in str(exc.value)
+
+
+# ────────────────────────── validation errors (unchanged behaviour) ──────────────────────────
 
 
 def test_raises_when_provider_does_not_offer_gpu():
-    # The real bug: T4 requested from verda, which only offers H100/A100.
     with pytest.raises(SessionError, match="not offered by provider 'verda'") as exc:
         check_gpu_offered(MODELS, "T4", "verda", None)
-    # The error must point the user at the provider that *does* offer it.
-    assert "gcp" in str(exc.value)
+    assert "gcp" in str(exc.value)  # points at the provider that *does* offer it
 
 
 def test_raises_when_gpu_type_unknown():
@@ -59,14 +86,8 @@ def test_raises_when_gpu_unavailable_everywhere():
         check_gpu_offered(MODELS, "A100", None, None)
 
 
-def test_ok_matching_by_family_name():
-    # "H100" is a family; the offered model name is "H100_SXM".
-    check_gpu_offered(MODELS, "H100", "acme", None)
-    check_gpu_offered(MODELS, "H100_SXM", "verda", None)
-
-
 def test_ok_when_location_matches():
-    check_gpu_offered(MODELS, "T4", "gcp", "europe-west4-a")
+    assert check_gpu_offered(MODELS, "T4", "gcp", "europe-west4-a") == "T4_16G_PCIe"
 
 
 def test_raises_when_location_not_offered_by_provider():
@@ -97,18 +118,18 @@ def test_preflight_propagates_definitive_mismatch():
         preflight_gpu_availability(client, "T4", "verda", None)
 
 
-def test_preflight_passes_through_on_valid_combo():
+def test_preflight_returns_resolved_name_on_valid_combo():
     client = _FakeClient(data=SAMPLE)
-    preflight_gpu_availability(client, "T4", "gcp", None)  # no raise
+    assert preflight_gpu_availability(client, "T4", "gcp", None) == "T4_16G_PCIe"
     assert client.calls == 1
 
 
-def test_preflight_is_silent_when_availability_fetch_fails():
+def test_preflight_returns_gpu_unchanged_when_fetch_fails():
     """A flaky availability endpoint must NOT block a job submission."""
     client = _FakeClient(raises=RuntimeError("network down"))
-    preflight_gpu_availability(client, "T4", "verda", None)  # swallowed, no raise
+    assert preflight_gpu_availability(client, "T4", "verda", None) == "T4"
 
 
-def test_preflight_is_silent_when_payload_has_no_models():
+def test_preflight_returns_gpu_unchanged_when_no_models():
     client = _FakeClient(data={})  # malformed/empty → nothing to validate against
-    preflight_gpu_availability(client, "T4", "verda", None)  # no raise
+    assert preflight_gpu_availability(client, "T4", "verda", None) == "T4"
