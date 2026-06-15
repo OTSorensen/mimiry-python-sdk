@@ -1,48 +1,50 @@
 """Wrap a user function + args for remote execution, and parse the result back.
 
-# Trust model
+# Result handling
 
-cloudpickle is used in both directions: we serialize the user's function +
-args (going out) and the function's return value (coming back). This is the
-same pattern Ray and Dask use. The serialized blobs travel only
-between the local Python process and a Mimiry session created by the same
-authenticated account — i.e., code we authored running on a container our
-own credentials provisioned. There is no untrusted-source deserialization
-path here.
+cloudpickle is used in both directions: the user's function + args go out and
+the return value comes back, the same pattern Ray and Dask use. As an integrity
+guard, the return value is wrapped in an HMAC-SHA256 envelope keyed by a
+per-call secret (``MIMIRY_RESULT_HMAC_KEY``) and verified by
+``verify_result_envelope`` before ``cloudpickle.loads`` runs; a payload whose
+HMAC doesn't match is rejected. ``parse_result`` is for these SDK-produced
+payloads only.
 
-Do not use this module's ``parse_result`` on payloads from other origins.
+# Wire format (v1)
 
-# Wire format (SSH transport, v1)
-
-The softlaunch ``/logs`` endpoint is currently unusable for live stdout
-retrieval, so the SDK fetches results via SSH instead. The container:
+Results are returned out-of-band. The container:
 
   1. Reads the base64-encoded cloudpickle of ``(fn, args, kwargs)`` from
      the ``MIMIRY_FN_PAYLOAD_B64`` env var.
   2. Calls ``fn(*args, **kwargs)``.
   3. Cloudpickles ``{"ok": True, "result": value}`` (or
-     ``{"ok": False, "error": {...}}``) and writes the base64-encoded blob
-     to ``/tmp/mimiry_result.b64``.
-  4. Blocks until the SDK creates ``/tmp/mimiry_done`` (or a long hard
-     timeout passes — bounds runaway cost).
+     ``{"ok": False, "error": {...}}``), base64-encodes it, and writes the
+     signed envelope ``<hex hmac-sha256>\n<base64 blob>`` to
+     ``/tmp/mimiry_result.b64`` (HMAC key from ``MIMIRY_RESULT_HMAC_KEY``).
+  4. Blocks until the SDK creates ``/tmp/mimiry_done`` (or a hard timeout
+     passes — bounds runaway cost).
   5. Exits, triggering ``auto_terminate: on_complete``.
 
-If the bootstrap can't even decode the payload (e.g., pip install of
-cloudpickle failed), it writes an error message to
-``/tmp/mimiry_bootstrap_error`` so the SDK's SSH poller can surface it.
+If the bootstrap can't decode the payload (e.g. a failed cloudpickle install),
+it writes a message to ``/tmp/mimiry_bootstrap_error`` for the SDK to surface.
 """
 
 from __future__ import annotations
 
 import base64
+import hashlib
+import hmac
+import secrets
 import textwrap
+import warnings
 
 import cloudpickle
 
 from mimiry._ssh import CONTAINER_HOLD_TIMEOUT_SECONDS, DONE_FLAG, ERROR_FILE, RESULT_FILE
-from mimiry.exceptions import ResultParseError
+from mimiry.exceptions import ResultIntegrityError, ResultParseError
 
 _PAYLOAD_ENV = "MIMIRY_FN_PAYLOAD_B64"
+_RESULT_HMAC_ENV = "MIMIRY_RESULT_HMAC_KEY"
 
 # Soft size limit before we warn. Mimiry's command/env limits aren't publicly documented;
 # 256 KB has been safe in practice.
@@ -52,9 +54,26 @@ PAYLOAD_SOFT_LIMIT_BYTES = 256 * 1024
 def pack_call(fn, args: tuple, kwargs: dict) -> str:
     """Cloudpickle ``(fn, args, kwargs)`` and return a base64 string suitable for
     embedding in an environment variable.
+
+    Warns (but still proceeds) when the encoded payload exceeds
+    :data:`PAYLOAD_SOFT_LIMIT_BYTES`. The payload rides in a container env var,
+    a control-plane channel bounded by OS ``ARG_MAX`` and the backend's message
+    limits — so a large blob can fail opaquely far downstream. The warning turns
+    that into an early, actionable signal: put big data on a volume/bucket and
+    pass it by reference instead of inlining it as an argument.
     """
     blob = cloudpickle.dumps((fn, args, kwargs))
-    return base64.b64encode(blob).decode("ascii")
+    encoded = base64.b64encode(blob).decode("ascii")
+    if len(encoded) > PAYLOAD_SOFT_LIMIT_BYTES:
+        warnings.warn(
+            f"mimiry: function payload is {len(encoded) // 1024} KB, over the "
+            f"{PAYLOAD_SOFT_LIMIT_BYTES // 1024} KB soft limit. Large arguments "
+            f"ride in a container environment variable and may fail to transmit. "
+            f"Put big data on a mounted volume or a bucket and pass a path/URL "
+            f"instead of the data itself.",
+            stacklevel=2,
+        )
+    return encoded
 
 
 def build_bootstrap_script(image_install_prefix: str = "") -> str:
@@ -65,7 +84,7 @@ def build_bootstrap_script(image_install_prefix: str = "") -> str:
     """
     py_bootstrap = textwrap.dedent(
         f'''
-        import base64, os, subprocess, sys, time, traceback
+        import base64, hashlib, hmac, os, subprocess, sys, time, traceback
 
         def _write_error(msg: str) -> None:
             try:
@@ -132,10 +151,16 @@ def build_bootstrap_script(image_install_prefix: str = "") -> str:
                 }})
             ).decode("ascii")
 
+        # Sign the result with the per-call key so the SDK can verify it
+        # before deserializing.
+        _hmac_key = os.environ.get("{_RESULT_HMAC_ENV}", "").encode("ascii")
+        _sig = hmac.new(_hmac_key, wire.encode("ascii"), hashlib.sha256).hexdigest()
+        _envelope = _sig + "\\n" + wire
+
         # Write atomically: rename(tmp, final) so an SSH poller never sees a partial file.
         _tmp = "{RESULT_FILE}.partial"
         with open(_tmp, "w") as f:
-            f.write(wire)
+            f.write(_envelope)
         os.replace(_tmp, "{RESULT_FILE}")
 
         # Block until the SDK signals done, or a hard timeout passes (bounds runaway cost).
@@ -254,3 +279,39 @@ class RemoteFunctionError(Exception):
 def payload_env_var() -> str:
     """The env-var name the container reads the pickled payload from."""
     return _PAYLOAD_ENV
+
+
+def result_hmac_env_var() -> str:
+    """The env-var name the container reads the per-call HMAC key from."""
+    return _RESULT_HMAC_ENV
+
+
+def new_result_hmac_key() -> str:
+    """Generate a fresh 256-bit hex key for signing one call's result envelope.
+
+    Each ``.remote()`` call uses its own key.
+    """
+    return secrets.token_hex(32)
+
+
+def verify_result_envelope(envelope: str, hmac_key: str) -> str:
+    """Verify a signed result envelope and return its inner base64 payload.
+
+    The container writes ``<hex hmac-sha256>\\n<base64 payload>``; we recompute
+    the HMAC over the payload with the per-call key and compare in constant
+    time. Raises :class:`ResultIntegrityError` if the HMAC doesn't match, so an
+    unverified payload never reaches :func:`parse_result`.
+    """
+    sep = envelope.find("\n")
+    if sep < 0:
+        raise ResultIntegrityError("result envelope is missing its HMAC header")
+    sig = envelope[:sep].strip()
+    body = envelope[sep + 1 :]
+    expected = hmac.new(
+        hmac_key.encode("ascii"), body.encode("ascii"), hashlib.sha256
+    ).hexdigest()
+    if not hmac.compare_digest(sig, expected):
+        raise ResultIntegrityError(
+            "result integrity check (HMAC) failed; refusing to deserialize the result."
+        )
+    return body

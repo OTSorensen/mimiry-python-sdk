@@ -26,9 +26,12 @@ from mimiry._client import MimiryClient
 from mimiry._config import get_config
 from mimiry._serialization import (
     build_bootstrap_script,
+    new_result_hmac_key,
     pack_call,
     parse_result,
     payload_env_var,
+    result_hmac_env_var,
+    verify_result_envelope,
 )
 from mimiry._session import (
     raise_if_ended_before_result,
@@ -46,7 +49,7 @@ from mimiry._ssh import (
     wait_for_remote_file,
     wait_for_sshd,
 )
-from mimiry.exceptions import ResultParseError, SessionError
+from mimiry.exceptions import ResultIntegrityError, ResultParseError, SessionError
 from mimiry.image import Image, normalize_image
 
 
@@ -197,8 +200,9 @@ def _run_remote(fn: Callable, cfg: FunctionConfig, args: tuple, kwargs: dict) ->
     token = get_token(config.ssh_key_path, config.api_base)
     image = normalize_image(cfg.image)
     payload_b64 = pack_call(fn, args, kwargs)
+    hmac_key = new_result_hmac_key()
     command = build_bootstrap_script(image_install_prefix=image.install_prefix())
-    env_vars = {payload_env_var(): payload_b64}
+    env_vars = {payload_env_var(): payload_b64, result_hmac_env_var(): hmac_key}
 
     session_payload = _build_session_payload(cfg, command, env_vars)
 
@@ -276,7 +280,11 @@ def _run_remote(fn: Callable, cfg: FunctionConfig, args: tuple, kwargs: dict) ->
                 close_control_channel(target)
 
             try:
-                return parse_result(raw)
+                # Verify the result's HMAC before deserializing.
+                verified_b64 = verify_result_envelope(raw, hmac_key)
+                return parse_result(verified_b64)
+            except ResultIntegrityError as e:
+                raise ResultIntegrityError(f"{e} (session {session_id})") from e
             except ResultParseError as e:
                 raise ResultParseError(f"{e} (session {session_id})") from e
         except Exception:

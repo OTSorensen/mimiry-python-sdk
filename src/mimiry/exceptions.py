@@ -45,3 +45,12 @@ class SessionTimeout(SessionError):
 
 class ResultParseError(MimiryError):
     """The remote function ran but the result sentinel was missing or unparseable."""
+
+
+class ResultIntegrityError(MimiryError):
+    """The result envelope's HMAC did not verify.
+
+    Raised before deserialization (so an unverified payload is not loaded).
+    Distinct from :class:`ResultParseError`, which means the payload verified
+    but could not be parsed.
+    """

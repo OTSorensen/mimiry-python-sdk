@@ -11,6 +11,7 @@ from mimiry.exceptions import (
     SessionFailed,
     SessionTimeout,
     ResultParseError,
+    ResultIntegrityError,
 )
 from mimiry.function import function, Function
 from mimiry.image import Image
@@ -32,4 +33,5 @@ __all__ = [
     "SessionFailed",
     "SessionTimeout",
     "ResultParseError",
+    "ResultIntegrityError",
 ]
