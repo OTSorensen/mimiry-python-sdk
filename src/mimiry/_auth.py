@@ -1,4 +1,4 @@
-"""SSH-JWT authentication against softlaunch.mimiry.com.
+"""SSH-JWT authentication against the Mimiry compute API.
 
 Ports the algorithm from .claude/skills/mimiry-softlaunch/scripts/mimiry-auth.sh.
 We shell out to ``ssh-keygen`` for signing — implementing the SSH signature
@@ -24,6 +24,7 @@ from pathlib import Path
 
 import httpx
 
+from mimiry._config import DEFAULT_API_BASE
 from mimiry.exceptions import AuthError
 
 _TOKEN_REFRESH_BUFFER_SECONDS = 300  # refresh if < 5 min left
@@ -121,7 +122,7 @@ def _sign(message: bytes, private_key_path: Path) -> bytes:
 
 def exchange_ssh_for_token(
     ssh_key_path: str | Path,
-    api_base: str = "https://softlaunch.mimiry.com",
+    api_base: str = DEFAULT_API_BASE,
 ) -> Token:
     """Do the SSH-signature → JWT exchange. Returns a Token."""
     api_base = api_base.rstrip("/")
@@ -174,7 +175,7 @@ def exchange_ssh_for_token(
 
 def get_token(
     ssh_key_path: str | Path | None = None,
-    api_base: str = "https://softlaunch.mimiry.com",
+    api_base: str = DEFAULT_API_BASE,
 ) -> Token:
     """Get a fresh Token. Falls back to ``MIMIRY_SSH_KEY`` env var when ``ssh_key_path`` is None."""
     if ssh_key_path is None:

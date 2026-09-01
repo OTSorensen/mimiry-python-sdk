@@ -413,7 +413,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="mimiry", description=__doc__.splitlines()[0])
     parser.add_argument("--version", action="version", version=f"mimiry {__version__}")
     parser.add_argument("--ssh-key", help="Path to SSH private key (overrides MIMIRY_SSH_KEY).")
-    parser.add_argument("--api-base", help="API base URL (default: softlaunch.mimiry.com).")
+    parser.add_argument("--api-base", help="API base URL (default: alpha.mimiry.com).")
     subs = parser.add_subparsers(dest="cmd")
 
     def _cmd_help(_a: argparse.Namespace) -> int:
