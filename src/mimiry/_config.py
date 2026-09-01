@@ -23,7 +23,7 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-DEFAULT_API_BASE = "https://softlaunch.mimiry.com"
+DEFAULT_API_BASE = "https://alpha.mimiry.com"
 DEFAULT_TIMEOUT_SECONDS = 1800  # 30 min — must accommodate ~2 min cold start + work
 
 # Group/other WRITABLE bits. We reject a config carrying these on read: an
