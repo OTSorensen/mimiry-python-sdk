@@ -136,9 +136,16 @@ class MimiryClient:
         return self._json_or_raise(self._request("GET", f"/volumes/{volume_id}"))
 
     def extend_volume(self, volume_id: str, size_gb: int) -> dict:
-        """PATCH /volumes/{id} with a larger ``size_gb`` (volumes can't shrink)."""
+        """PUT /volumes/{id} with a larger ``new_size_gb`` (volumes can't shrink).
+
+        Method and field name match the live API's ``ExtendVolumeRequest``
+        schema (``PUT`` + ``new_size_gb``), confirmed against
+        ``https://alpha.mimiry.com`` — a ``PATCH`` with ``size_gb`` 404s /
+        fails ``required`` validation. See SDK-004 in
+        ``mimiry-alpha/bug-reports/SDK_BUG_REPORTS_2026-09-03.md``.
+        """
         return self._json_or_raise(
-            self._request("PATCH", f"/volumes/{volume_id}", json={"size_gb": size_gb})
+            self._request("PUT", f"/volumes/{volume_id}", json={"new_size_gb": size_gb})
         )
 
     def delete_volume(self, volume_id: str) -> dict | None:

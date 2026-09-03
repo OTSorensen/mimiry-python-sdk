@@ -63,12 +63,14 @@ def test_get_volume(client):
     assert call["method"] == "GET" and call["path"] == "/volumes/v9"
 
 
-def test_extend_volume_patches_size(client):
+def test_extend_volume_puts_new_size(client):
+    # Method + field name must match the live API's ExtendVolumeRequest
+    # schema (PUT + new_size_gb) — see SDK-004.
     client._next_resp = _FakeResp(200, {"id": "v1", "size_gb": 200})
     client.extend_volume("v1", 200)
     call = client._calls[-1]
-    assert call["method"] == "PATCH" and call["path"] == "/volumes/v1"
-    assert call["json"] == {"size_gb": 200}
+    assert call["method"] == "PUT" and call["path"] == "/volumes/v1"
+    assert call["json"] == {"new_size_gb": 200}
 
 
 def test_delete_volume_202_returns_none(client):
