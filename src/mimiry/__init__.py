@@ -1,6 +1,6 @@
-"""mimiry — Python SDK for Mimiry GPU compute (softlaunch).
+"""mimiry — Python SDK for Mimiry GPU compute.
 
-v0.2.0 — wraps the existing /api/compute/v1/sessions API. See README.md.
+Wraps the /api/compute/v1/sessions API. See README.md.
 """
 
 from mimiry._config import configure, get_config

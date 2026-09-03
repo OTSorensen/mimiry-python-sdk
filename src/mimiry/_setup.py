@@ -24,7 +24,7 @@ from pathlib import Path
 
 from mimiry._auth import get_token
 from mimiry._client import MimiryClient
-from mimiry._config import DEFAULT_API_BASE, save_key_path
+from mimiry._config import DEFAULT_API_BASE, save_config
 
 DEFAULT_KEY_PATH = Path("~/.ssh/mimiry").expanduser()
 
@@ -194,13 +194,13 @@ def run_setup_wizard(
     _register_key(pub, api_base)
 
     _step(3, "Save configuration")
-    # Primary mechanism: write the key path to the SDK config file. The SDK
-    # reads this directly, so it works in *this* shell and every future one
-    # without a restart. (Make it visible to this process too, for the verify
-    # step below.)
+    # Primary mechanism: write the key path *and* API base to the SDK config
+    # file. The SDK reads this directly, so it works in *this* shell and
+    # every future one without a restart. (Make it visible to this process
+    # too, for the verify step below.)
     os.environ["MIMIRY_SSH_KEY"] = str(priv)
-    cfg_file = save_key_path(priv)
-    print(f"  Saved key path to {cfg_file} (chmod 600) — the SDK uses this immediately.")
+    cfg_file = save_config(ssh_key_path=priv, api_base=api_base)
+    print(f"  Saved config to {cfg_file} (chmod 600) — the SDK uses this immediately.")
     # Secondary convenience: export the env var for shell/curl workflows too.
     _write_rc(priv)
 

@@ -13,7 +13,9 @@ from mimiry._config import (
     _parse_simple_toml,
     config_path,
     get_config,
+    read_api_base,
     read_key_path,
+    save_config,
     save_key_path,
 )
 
@@ -102,3 +104,66 @@ def test_simple_toml_parser_fallback():
 
 def test_simple_toml_parser_unescapes():
     assert _parse_simple_toml(r'ssh_key_path = "C:\\Users\\olive"')["ssh_key_path"] == r"C:\Users\olive"
+
+
+# ────────────────────────── api_base persistence (SDK-001) ──────────────────────────
+
+
+def test_save_config_persists_both_fields():
+    written = save_config(ssh_key_path="/home/olive/.ssh/mimiry", api_base="https://alpha.mimiry.com")
+    assert written.is_file()
+    assert stat.S_IMODE(written.stat().st_mode) == 0o600
+    assert read_key_path() == Path("/home/olive/.ssh/mimiry")
+    assert read_api_base() == "https://alpha.mimiry.com"
+
+
+def test_save_config_strips_trailing_slash():
+    save_config(api_base="https://alpha.mimiry.com/")
+    assert read_api_base() == "https://alpha.mimiry.com"
+
+
+def test_save_key_path_preserves_existing_api_base():
+    save_config(ssh_key_path="/old/key", api_base="https://alpha.mimiry.com")
+    save_key_path("/new/key")  # legacy helper — should not clobber api_base
+    assert read_key_path() == Path("/new/key")
+    assert read_api_base() == "https://alpha.mimiry.com"
+
+
+def test_save_config_preserves_existing_key_when_only_api_base_given():
+    save_config(ssh_key_path="/home/olive/.ssh/mimiry")
+    save_config(api_base="https://alpha.mimiry.com")
+    assert read_key_path() == Path("/home/olive/.ssh/mimiry")
+    assert read_api_base() == "https://alpha.mimiry.com"
+
+
+def test_read_api_base_none_when_absent():
+    save_key_path("/home/olive/.ssh/mimiry")  # no api_base ever saved
+    assert read_api_base() is None
+
+
+def test_read_api_base_rejects_group_or_other_writable():
+    written = save_config(api_base="https://alpha.mimiry.com")
+    written.chmod(0o666)
+    with pytest.raises(PermissionError, match="writable by group/other"):
+        read_api_base()
+
+
+def test_precedence_api_base_env_beats_file(monkeypatch):
+    save_config(api_base="https://from-file.example")
+    monkeypatch.setenv("MIMIRY_API_BASE", "https://from-env.example")
+    assert get_config().api_base == "https://from-env.example"
+
+
+def test_precedence_api_base_file_used_when_no_env_or_explicit():
+    save_config(api_base="https://from-file.example")
+    assert get_config().api_base == "https://from-file.example"
+
+
+def test_precedence_api_base_explicit_configure_beats_file(monkeypatch):
+    save_config(api_base="https://from-file.example")
+    cfg_mod.configure(api_base="https://from-arg.example")
+    assert get_config().api_base == "https://from-arg.example"
+
+
+def test_api_base_defaults_when_nothing_set():
+    assert get_config().api_base == cfg_mod.DEFAULT_API_BASE

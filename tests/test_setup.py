@@ -241,7 +241,7 @@ def test_run_setup_wizard_success(monkeypatch, tmp_path):
 
     monkeypatch.setattr(setup, "_ensure_key", lambda kp: priv)
     monkeypatch.setattr(setup, "_register_key", lambda pub, base: None)
-    monkeypatch.setattr(setup, "save_key_path", lambda p: tmp_path / "config.toml")
+    monkeypatch.setattr(setup, "save_config", lambda **kw: tmp_path / "config.toml")
     monkeypatch.setattr(setup, "_write_rc", lambda p: None)
     monkeypatch.setattr(setup, "_verify", lambda p, b: True)
     monkeypatch.delenv("MIMIRY_SSH_KEY", raising=False)
@@ -257,7 +257,7 @@ def test_run_setup_wizard_returns_1_when_verify_fails(monkeypatch, tmp_path):
     priv = tmp_path / "mimiry"
     monkeypatch.setattr(setup, "_ensure_key", lambda kp: priv)
     monkeypatch.setattr(setup, "_register_key", lambda pub, base: None)
-    monkeypatch.setattr(setup, "save_key_path", lambda p: tmp_path / "config.toml")
+    monkeypatch.setattr(setup, "save_config", lambda **kw: tmp_path / "config.toml")
     monkeypatch.setattr(setup, "_write_rc", lambda p: None)
     monkeypatch.setattr(setup, "_verify", lambda p, b: False)
 
