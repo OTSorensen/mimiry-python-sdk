@@ -197,7 +197,7 @@ def test_logout_reports_singular_for_one_token(monkeypatch, capsys):
     monkeypatch.setattr(_token_cache, "clear", lambda: 1)
     assert cli.main(["logout"]) == 0
     out = capsys.readouterr().out
-    assert "1 cached token." in out and "tokens" not in out
+    assert "Cleared 1 cached token." in out
 
 
 def test_transactions(patch_client, capsys):

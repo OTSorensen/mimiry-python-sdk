@@ -298,6 +298,38 @@ def test_store_enforces_0700_on_a_preexisting_loose_directory():
     assert stat.S_IMODE(d.stat().st_mode) == 0o700
 
 
+def test_store_locks_down_intermediate_directories(tmp_path, monkeypatch):
+    """mkdir(parents=True) applies mode only to the LEAF; ancestors get umask.
+
+    A group-writable ancestor is enough for another local user to swap a
+    directory beneath us, so every component below the cache root must be
+    0700 — not just `tokens/` itself.
+    """
+    root = tmp_path / "cacheroot"
+    monkeypatch.setenv("XDG_CACHE_HOME", str(root))
+
+    _token_cache.store(FP, BASE, "jwt-abc", _future())
+
+    intermediate = root / "mimiry"
+    leaf = intermediate / "tokens"
+    assert stat.S_IMODE(leaf.stat().st_mode) == 0o700
+    assert stat.S_IMODE(intermediate.stat().st_mode) == 0o700, (
+        "the 'mimiry' intermediate must not be left at 0777 & ~umask"
+    )
+
+
+def test_store_does_not_tighten_the_user_cache_root(tmp_path, monkeypatch):
+    """$XDG_CACHE_HOME is the user's, not ours — do not silently chmod it."""
+    root = tmp_path / "cacheroot"
+    root.mkdir(mode=0o755)
+    os.chmod(root, 0o755)
+    monkeypatch.setenv("XDG_CACHE_HOME", str(root))
+
+    _token_cache.store(FP, BASE, "jwt-abc", _future())
+
+    assert stat.S_IMODE(root.stat().st_mode) == 0o755
+
+
 @pytest.mark.parametrize("dir_mode", [0o777, 0o770, 0o707])
 def test_load_refuses_a_group_or_other_writable_directory(dir_mode):
     """A writable dir lets another user swap entries even at file mode 0600."""
@@ -308,6 +340,94 @@ def test_load_refuses_a_group_or_other_writable_directory(dir_mode):
         assert _token_cache.load(FP, BASE) is None
     finally:
         os.chmod(d, 0o700)  # keep tmp_path cleanup predictable
+
+
+# ────────────────────────── exchange_ssh_for_token ──────────────────────────
+#
+# These drive the REAL exchange with only its boundaries stubbed (httpx.post,
+# _sign, _fingerprint) rather than replacing the function itself. Every other
+# integration test monkeypatches exchange_ssh_for_token away, which means none
+# of them touches the write path: deleting the store() call left the whole
+# suite green, so the feature could silently stop caching and the rate-limit
+# failure it exists to prevent would return unnoticed.
+
+
+@pytest.fixture
+def stub_exchange_boundaries(monkeypatch, tmp_path):
+    """Stub only what leaves the process: signing, fingerprinting, HTTP."""
+    from mimiry import _auth
+
+    priv = tmp_path / "id_test"
+    priv.write_text("PRIVATE")
+    Path(f"{priv}.pub").write_text("ssh-ed25519 AAAA test")
+
+    monkeypatch.setattr(_auth, "_fingerprint", lambda _pub: FP)
+    monkeypatch.setattr(_auth, "_sign", lambda _msg, _key: b"signature-bytes")
+
+    posted = {}
+
+    class _Resp:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {"access_token": "jwt-from-exchange", "expires_in": HOUR}
+
+    def _fake_post(url, **kwargs):
+        posted["url"] = url
+        posted["headers"] = kwargs.get("headers", {})
+        return _Resp()
+
+    monkeypatch.setattr(_auth.httpx, "post", _fake_post)
+    return priv, posted
+
+
+def test_exchange_persists_the_token_to_the_cache(stub_exchange_boundaries):
+    """The write path itself. Fails if the store() call is removed."""
+    from mimiry import _auth
+
+    priv, _ = stub_exchange_boundaries
+    assert _token_cache.load(FP, BASE) is None  # precondition: cold cache
+
+    token = _auth.exchange_ssh_for_token(str(priv), BASE)
+    assert token.access_token == "jwt-from-exchange"
+
+    cached = _token_cache.load(FP, BASE)
+    assert cached is not None, "a completed exchange must populate the cache"
+    assert cached[0] == "jwt-from-exchange"
+
+
+def test_exchange_then_get_token_serves_from_cache(stub_exchange_boundaries):
+    """End-to-end SDK-003 guarantee, with production code doing the caching."""
+    from mimiry import _auth
+
+    priv, posted = stub_exchange_boundaries
+    _auth.exchange_ssh_for_token(str(priv), BASE)
+    posted.clear()
+
+    # A later process: no exchange should happen at all.
+    def _fail(*_a, **_kw):
+        raise AssertionError("cache hit must not re-exchange")
+
+    import pytest as _pytest
+
+    with _pytest.MonkeyPatch.context() as mp:
+        mp.setattr(_auth.httpx, "post", _fail)
+        token = _auth.get_token(str(priv), BASE)
+
+    assert token.access_token == "jwt-from-exchange"
+    assert posted == {}, "no HTTP call should have been made"
+
+
+def test_exchange_survives_an_unwritable_cache(stub_exchange_boundaries, monkeypatch):
+    """Caching is an optimisation: a failed write must not fail the exchange."""
+    from mimiry import _auth
+
+    priv, _ = stub_exchange_boundaries
+    monkeypatch.setattr(_token_cache, "store", lambda *_a, **_kw: None)
+
+    token = _auth.exchange_ssh_for_token(str(priv), BASE)
+    assert token.access_token == "jwt-from-exchange"
 
 
 # ────────────────────────── get_token integration ──────────────────────────

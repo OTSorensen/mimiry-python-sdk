@@ -57,11 +57,19 @@ _TMP_SUFFIX = ".tmp"
 _ORPHAN_MIN_AGE_SECONDS = 60
 
 
+def _cache_root() -> Path:
+    """The user's cache root (``$XDG_CACHE_HOME`` or ``~/.cache``).
+
+    The boundary for permission tightening: components BELOW it are ours to
+    lock down, the root itself belongs to the user's wider setup.
+    """
+    base = os.environ.get("XDG_CACHE_HOME")
+    return Path(base).expanduser() if base else Path.home() / ".cache"
+
+
 def cache_dir() -> Path:
     """Directory holding cached tokens (honours ``$XDG_CACHE_HOME``)."""
-    base = os.environ.get("XDG_CACHE_HOME")
-    root = Path(base).expanduser() if base else Path.home() / ".cache"
-    return root / "mimiry" / "tokens"
+    return _cache_root() / "mimiry" / "tokens"
 
 
 def _cache_key(fingerprint: str, api_base: str) -> str:
@@ -145,6 +153,45 @@ def load(
     return token, float(expires_at)
 
 
+def _mkdir_chain_private(leaf: Path) -> None:
+    """Create ``leaf`` and its components under the cache root at ``0700``.
+
+    ``Path.mkdir(parents=True)`` applies its ``mode`` only to the final
+    component; intermediates are created at ``0777 & ~umask``. Under umask
+    002/000 — shared-group hosts, many container images — that leaves an
+    ancestor group-writable, which is enough for another local user to swap a
+    directory beneath us. Walk the chain and set each component explicitly.
+
+    Only components at or below the cache root are touched: ``$XDG_CACHE_HOME``
+    (or ``~/.cache``) belongs to the user's wider setup, and silently
+    tightening it would be a surprising side effect of caching a token.
+    """
+    root = _cache_root()
+    # The root itself may not exist yet. Create it (and anything above it) with
+    # default permissions — it is the user's directory, not ours to tighten.
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
+
+    chain: list[Path] = []
+    node = leaf
+    while True:
+        chain.append(node)
+        if node.parent == node or node.parent == root:
+            break
+        node = node.parent
+
+    for directory in reversed(chain):
+        directory.mkdir(mode=0o700, exist_ok=True)
+        try:
+            os.chmod(directory, 0o700)
+        except OSError:
+            # A component we do not own: leave it. The caller's own checks
+            # decide whether the result is still safe to use.
+            pass
+
+
 def store(fingerprint: str, api_base: str, access_token: str, expires_at: float) -> Path | None:
     """Persist a token ``0600``. Returns the path, or ``None`` if it couldn't be written.
 
@@ -162,9 +209,13 @@ def store(fingerprint: str, api_base: str, access_token: str, expires_at: float)
     )
 
     try:
-        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        # mkdir's mode is IGNORED when the directory already exists, and
-        # parents=True creates intermediates with the default umask — so the
+        # Create every component under the cache root at 0700, not just the
+        # leaf: Path.mkdir(parents=True) applies `mode` ONLY to the final
+        # component, so intermediates land at 0777 & ~umask — 0775 under a
+        # common umask, group-writable under umask 002/000 (shared-group
+        # hosts, many container images).
+        _mkdir_chain_private(path.parent)
+        # mkdir's mode is IGNORED when the directory already exists, so the
         # 0700 guarantee holds only for a directory this call just created.
         # Enforce it explicitly; the mode here is a security control, not a
         # convenience.

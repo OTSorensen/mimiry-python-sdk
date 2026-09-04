@@ -108,6 +108,16 @@ def cmd_logout(_: argparse.Namespace) -> int:
 
     removed = _token_cache.clear()
     print(f"Cleared {removed} cached token{'' if removed == 1 else 's'}.")
+    # Say what this does NOT do. These are bearer credentials with up to an
+    # hour of life, and `mimiry token` exists to pipe them into other tools —
+    # so copies routinely outlive the cache in shell history and scrollback.
+    # Mimiry exposes no revocation endpoint, so a user reaching for `logout`
+    # after a suspected leak needs to know the real remedy is key rotation.
+    print(
+        "Any token already issued stays valid until it expires (up to 1h) — "
+        "Mimiry has no revocation endpoint. If a token may have leaked, "
+        "rotate your SSH key in the portal."
+    )
     return 0
 
 
