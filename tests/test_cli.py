@@ -143,6 +143,63 @@ def test_whoami(patch_client, capsys):
     assert "Authenticated" in capsys.readouterr().out
 
 
+# ────────────────────────── token cache surface ──────────────────────────
+#
+# These assert the WIRING, not the flag's existence: `--refresh` is only
+# meaningful if it actually reaches get_token as use_cache=False, and `logout`
+# is only meaningful if it actually reaches the cache's clear().
+
+
+class _TokenStub:
+    def __init__(self, value="jwt-value"):
+        self.access_token = value
+
+
+def test_token_uses_cache_by_default(monkeypatch, capsys):
+    seen = {}
+
+    def _fake_get_token(key, base, *, use_cache=True):
+        seen["use_cache"] = use_cache
+        return _TokenStub()
+
+    monkeypatch.setattr(cli, "get_token", _fake_get_token)
+    assert cli.main(["token"]) == 0
+    assert seen["use_cache"] is True
+    assert "jwt-value" in capsys.readouterr().out
+
+
+def test_token_refresh_flag_bypasses_cache(monkeypatch):
+    seen = {}
+
+    def _fake_get_token(key, base, *, use_cache=True):
+        seen["use_cache"] = use_cache
+        return _TokenStub()
+
+    monkeypatch.setattr(cli, "get_token", _fake_get_token)
+    assert cli.main(["token", "--refresh"]) == 0
+    assert seen["use_cache"] is False
+
+
+def test_logout_clears_the_token_cache(monkeypatch, capsys):
+    from mimiry import _token_cache
+
+    calls = []
+    monkeypatch.setattr(_token_cache, "clear", lambda: (calls.append(1), 3)[1])
+
+    assert cli.main(["logout"]) == 0
+    assert calls == [1], "logout must actually reach the cache's clear()"
+    assert "3" in capsys.readouterr().out
+
+
+def test_logout_reports_singular_for_one_token(monkeypatch, capsys):
+    from mimiry import _token_cache
+
+    monkeypatch.setattr(_token_cache, "clear", lambda: 1)
+    assert cli.main(["logout"]) == 0
+    out = capsys.readouterr().out
+    assert "1 cached token." in out and "tokens" not in out
+
+
 def test_transactions(patch_client, capsys):
     fake = patch_client(_FakeClient(transactions={"transactions": [{"amount": -1.2}]}))
     assert cli.main(["transactions", "--limit", "5"]) == 0

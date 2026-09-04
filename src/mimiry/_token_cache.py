@@ -46,6 +46,16 @@ _INSECURE_BITS = (
     stat.S_IRGRP | stat.S_IWGRP | stat.S_IROTH | stat.S_IWOTH
 )  # 0o066
 
+# Temp-file naming for the atomic write. Named constants because three places
+# must agree: store() creates them, _sweep_orphans() removes stale ones, and
+# clear() must delete them too — a cleanup that knows only the final artifact
+# leaves live credentials behind.
+_TMP_PREFIX = ".tok-"
+_TMP_SUFFIX = ".tmp"
+# An orphan younger than this may belong to a store() running right now in
+# another process; leave it alone rather than racing it.
+_ORPHAN_MIN_AGE_SECONDS = 60
+
 
 def cache_dir() -> Path:
     """Directory holding cached tokens (honours ``$XDG_CACHE_HOME``)."""
@@ -81,6 +91,17 @@ def load(
     try:
         st = path.stat()
     except (FileNotFoundError, NotADirectoryError, PermissionError, OSError):
+        return None
+
+    # A group/other-writable containing directory lets another local user
+    # unlink or replace entries even when the file's own mode is correct.
+    # The file check below cannot see that, so check the directory too.
+    try:
+        dir_mode = path.parent.stat().st_mode
+    except OSError:
+        return None
+    if dir_mode & (stat.S_IWGRP | stat.S_IWOTH):
+        _discard(path)
         return None
 
     # A world-readable token file is a leaked credential. Refuse it and remove
@@ -142,7 +163,18 @@ def store(fingerprint: str, api_base: str, access_token: str, expires_at: float)
 
     try:
         path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=".tok-", suffix=".tmp")
+        # mkdir's mode is IGNORED when the directory already exists, and
+        # parents=True creates intermediates with the default umask — so the
+        # 0700 guarantee holds only for a directory this call just created.
+        # Enforce it explicitly; the mode here is a security control, not a
+        # convenience.
+        os.chmod(path.parent, 0o700)
+        # Sweep orphaned temp files before writing. An abnormal termination
+        # between mkstemp and os.replace leaves a 0600 file holding a live
+        # JWT that nothing else would ever remove: it is not the canonical
+        # name, so load()/_discard never touch it and it never expires.
+        _sweep_orphans(path.parent)
+        fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=_TMP_PREFIX, suffix=_TMP_SUFFIX)
         tmp = Path(tmp_name)
         try:
             os.fchmod(fd, 0o600)
@@ -159,6 +191,31 @@ def store(fingerprint: str, api_base: str, access_token: str, expires_at: float)
     return path
 
 
+def _sweep_orphans(directory: Path, *, now: float | None = None) -> int:
+    """Remove stale temp files left by an interrupted ``store()``.
+
+    Each holds a live JWT at ``0600`` under a non-canonical name, so nothing
+    else in this module would ever reclaim it. Only files older than
+    ``_ORPHAN_MIN_AGE_SECONDS`` are touched, so a concurrent write is not
+    raced. Best-effort: failures are ignored.
+    """
+    current = time.time() if now is None else now
+    removed = 0
+    try:
+        candidates = list(directory.glob(f"{_TMP_PREFIX}*{_TMP_SUFFIX}"))
+    except OSError:
+        return 0
+    for entry in candidates:
+        try:
+            if current - entry.stat().st_mtime < _ORPHAN_MIN_AGE_SECONDS:
+                continue
+            entry.unlink()
+            removed += 1
+        except OSError:
+            pass
+    return removed
+
+
 def _discard(path: Path) -> None:
     """Remove an unusable cache entry, ignoring failure."""
     try:
@@ -168,10 +225,18 @@ def _discard(path: Path) -> None:
 
 
 def clear() -> int:
-    """Delete all cached tokens. Returns how many files were removed."""
+    """Delete all cached tokens. Returns how many files were removed.
+
+    Covers both the canonical ``*.json`` entries and any ``.tok-*.tmp``
+    orphans: both hold a usable bearer token, and a logout that leaves one
+    behind reports a security guarantee it did not deliver. Orphans are
+    removed regardless of age here — an explicit logout is a deliberate act,
+    not the opportunistic sweep in ``store()``.
+    """
     removed = 0
+    root = cache_dir()
     try:
-        entries = list(cache_dir().glob("*.json"))
+        entries = list(root.glob("*.json")) + list(root.glob(f"{_TMP_PREFIX}*{_TMP_SUFFIX}"))
     except OSError:
         return 0
     for entry in entries:

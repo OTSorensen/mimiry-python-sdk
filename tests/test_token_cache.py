@@ -154,14 +154,34 @@ def test_group_or_other_accessible_file_is_refused_and_removed(mode):
     assert not path.exists()
 
 
-def test_no_token_material_in_config_dir(tmp_path):
-    """Tokens live in the cache dir, never beside the config file."""
+def test_no_token_material_in_config_dir(tmp_path, monkeypatch):
+    """Tokens live in the cache dir, never beside the config file.
+
+    Asserts unconditionally: an earlier version guarded the whole body on a
+    path the fixtures never created, so it asserted nothing and would have
+    passed even if store() wrote the JWT into the config directory.
+    """
+    from mimiry import _config
+
+    config_root = tmp_path / "xdg-config"
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config_root))
+    # Materialise the config file so there is something real to search.
+    _config.save_config(ssh_key_path="/home/x/.ssh/mimiry", api_base=BASE)
+    assert _config.config_path().is_file(), "precondition: config file must exist"
+
     _token_cache.store(FP, BASE, "jwt-secret-value", _future())
-    config_root = tmp_path / "xdg"
-    if config_root.exists():
-        for f in config_root.rglob("*"):
-            if f.is_file():
-                assert "jwt-secret-value" not in f.read_text()
+
+    searched = 0
+    for f in config_root.rglob("*"):
+        if f.is_file():
+            searched += 1
+            assert "jwt-secret-value" not in f.read_text()
+    assert searched > 0, "precondition: config dir must contain files to search"
+
+    # And the token really is in the cache dir, disjoint from the config root.
+    stored = _token_cache.cache_path(FP, BASE)
+    assert stored.is_file()
+    assert config_root not in stored.parents
 
 
 # ────────────────────────── corruption tolerance ──────────────────────────
@@ -210,6 +230,84 @@ def test_clear_removes_all_entries():
 
 def test_clear_on_missing_dir_is_zero_not_error():
     assert _token_cache.clear() == 0
+
+
+# ────────────────────────── orphaned temp files ──────────────────────────
+
+
+def _plant_orphan(age_seconds: float = 0.0) -> Path:
+    """Create a temp file shaped like an interrupted store()'s leftover."""
+    d = _token_cache.cache_dir()
+    d.mkdir(mode=0o700, parents=True, exist_ok=True)
+    orphan = d / f"{_token_cache._TMP_PREFIX}abcd1234{_token_cache._TMP_SUFFIX}"
+    orphan.write_text('{"access_token": "jwt-orphaned-live-token"}')
+    os.chmod(orphan, 0o600)
+    if age_seconds:
+        old = time.time() - age_seconds
+        os.utime(orphan, (old, old))
+    return orphan
+
+
+def test_clear_removes_orphaned_temp_files():
+    """A logout that leaves a live token behind is a false assurance."""
+    _token_cache.store(FP, BASE, "a", _future())
+    orphan = _plant_orphan()
+    assert orphan.is_file()
+
+    assert _token_cache.clear() == 2  # the .json AND the orphan
+    assert not orphan.exists()
+
+
+def test_clear_removes_orphans_regardless_of_age():
+    """Explicit logout is deliberate — it does not wait out the age guard."""
+    orphan = _plant_orphan(age_seconds=0)
+    assert _token_cache.clear() == 1
+    assert not orphan.exists()
+
+
+def test_store_sweeps_stale_orphans():
+    stale = _plant_orphan(age_seconds=_token_cache._ORPHAN_MIN_AGE_SECONDS + 30)
+    _token_cache.store(FP, BASE, "fresh", _future())
+    assert not stale.exists(), "an interrupted write's leftover must not survive"
+
+
+def test_store_leaves_recent_orphans_alone():
+    """A young temp file may belong to a concurrent store() — do not race it."""
+    recent = _plant_orphan(age_seconds=0)
+    _token_cache.store(FP, BASE, "fresh", _future())
+    assert recent.exists()
+
+
+def test_sweep_orphans_ignores_canonical_entries():
+    _token_cache.store(FP, BASE, "keep-me", _future())
+    _token_cache._sweep_orphans(_token_cache.cache_dir(), now=time.time() + 10_000)
+    assert _token_cache.load(FP, BASE) is not None
+
+
+# ────────────────────────── directory permissions ──────────────────────────
+
+
+def test_store_enforces_0700_on_a_preexisting_loose_directory():
+    """mkdir(mode=…, exist_ok=True) ignores mode on an existing directory."""
+    d = _token_cache.cache_dir()
+    d.mkdir(mode=0o777, parents=True, exist_ok=True)
+    os.chmod(d, 0o777)
+    assert stat.S_IMODE(d.stat().st_mode) == 0o777  # precondition
+
+    _token_cache.store(FP, BASE, "jwt-abc", _future())
+    assert stat.S_IMODE(d.stat().st_mode) == 0o700
+
+
+@pytest.mark.parametrize("dir_mode", [0o777, 0o770, 0o707])
+def test_load_refuses_a_group_or_other_writable_directory(dir_mode):
+    """A writable dir lets another user swap entries even at file mode 0600."""
+    _token_cache.store(FP, BASE, "jwt-abc", _future())
+    d = _token_cache.cache_dir()
+    os.chmod(d, dir_mode)
+    try:
+        assert _token_cache.load(FP, BASE) is None
+    finally:
+        os.chmod(d, 0o700)  # keep tmp_path cleanup predictable
 
 
 # ────────────────────────── get_token integration ──────────────────────────
