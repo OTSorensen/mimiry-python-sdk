@@ -158,7 +158,10 @@ def _write_rc(key_path: Path) -> None:
 def _verify(key_path: Path, api_base: str) -> bool:
     """Run a balance check through the real auth path. Returns True on success."""
     try:
-        token = get_token(str(key_path), api_base)
+        # Force a real exchange: setup's whole purpose is proving this key is
+        # registered and works. A cached token from an earlier key would let a
+        # broken registration pass verification.
+        token = get_token(str(key_path), api_base, use_cache=False)
         with MimiryClient(token) as client:
             balance = client.get_balance()
     except Exception as e:  # noqa: BLE001 — surface any failure as actionable guidance

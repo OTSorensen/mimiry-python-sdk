@@ -210,16 +210,24 @@ class _FakeClient:
 
 
 def test_verify_success(monkeypatch, capsys):
-    monkeypatch.setattr(setup, "get_token", lambda key, base: "tok")
+    seen = {}
+
+    def _fake_get_token(key, base, *, use_cache=True):
+        seen["use_cache"] = use_cache
+        return "tok"
+
+    monkeypatch.setattr(setup, "get_token", _fake_get_token)
     monkeypatch.setattr(setup, "MimiryClient", lambda tok: _FakeClient({"balance": 42, "currency": "EUR"}))
 
     assert setup._verify(Path("/k"), "https://api") is True
     out = capsys.readouterr().out
     assert "42 EUR" in out
+    # Setup must prove the key really works — never accept a cached token.
+    assert seen["use_cache"] is False
 
 
 def test_verify_failure_returns_false_with_guidance(monkeypatch, capsys):
-    def boom(_key, _base):
+    def boom(_key, _base, **_kwargs):
         raise RuntimeError("key not registered")
 
     monkeypatch.setattr(setup, "get_token", boom)
