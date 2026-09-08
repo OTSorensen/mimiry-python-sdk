@@ -6,7 +6,7 @@ description: Independent multi-specialist AI code review of a diff (staged or br
 # Code Review Agent
 
 Ensemble review: a deterministic context pack feeds three specialist reviewers
-(security, pattern-compliance, Supabase/RLS); their findings are merged,
+(security, pattern-compliance, api-contract); their findings are merged,
 deduplicated, and risk-tiered. Findings are advice — the human retains final
 judgment; never auto-apply fixes.
 

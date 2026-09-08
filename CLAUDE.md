@@ -66,15 +66,24 @@ when none is found, because the review verifies the diff against the ticket's
 acceptance criteria. Satisfy it in one of three ways:
 
 - commit `docs/tickets/<slug>.md` alongside the work (preferred — the ticket
-  ships with what it describes), where `<slug>` appears in the branch name; or
+  ships with what it describes). A ticket committed inside the push range is
+  matched by being in the diff, so its name is unconstrained; naming it after
+  the branch is still worth doing, because that is what lets a *later*
+  ticketless push resolve it; or
 - pass `CRA_TICKET=docs/tickets/<slug>.md` when the ticket landed in an
   earlier push; or
+- rely on branch-name matching for a ticket from an earlier push — the file
+  stem must appear as a delimiter-bounded segment of the branch name
+  (`docs/tickets/review-gate.md` resolves on `chore/review-gate`); or
 - `CRA_REQUIRE_TICKET=0` to downgrade it to an in-report finding — for
   genuinely ticketless work only, never as a routine bypass.
 
-Use `docs/tickets/TEMPLATE.md` as the starting point. Acceptance criteria are
-graded met / not-met / unclear against the diff, so write them as observable
-behaviour rather than intentions.
+Start from `docs/templates/ticket.md`. It deliberately lives **outside**
+`docs/tickets/`, which the resolver globs: a template stored in the scanned
+directory is resolved as a real ticket, and its placeholder acceptance criteria
+then get graded against unrelated diffs. Acceptance criteria are graded
+met / not-met / unclear against the diff, so write them as observable behaviour
+rather than intentions.
 
 Hook refusals (findings themselves stay advisory unless `CRA_BLOCKING=1`).
 This table and the header of `.githooks/pre-push` carry the same six and must

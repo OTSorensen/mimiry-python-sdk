@@ -36,11 +36,11 @@ These are **not** drift. Reapply every one of them after any re-copy.
    equivalent). It checks every client method against the generated OpenAPI
    digest in `.claude/review-rules/api-contract.md`.
 
-3. **`SKILL.md` step 4** names `api-contract-agent.md` in the third dispatch
-   slot instead of `supabase-rls-agent.md`.
-
-4. **`SKILL.md` step 5** tags findings `["api-contract"]` instead of
-   `["supabase-rls"]`.
+3. **`SKILL.md`** names `api-contract-agent.md` in the third dispatch slot
+   (step 4), tags findings `["api-contract"]` (step 5), and says
+   `api-contract` in the overview paragraph. **All three**: the overview was
+   missed on the first pass and left the file contradicting itself, which a
+   review caught.
 
 5. **`references/report-format.md`** drops `supabase-rls` from the category
    enum.
