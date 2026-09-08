@@ -4,10 +4,10 @@ The SDK's primary surface is the Python decorator, but the CLI lets users
 verify auth and inspect/manage sessions and volumes without writing code:
 
     $ mimiry balance
-    $ mimiry availability --gpu-family T4 --provider gcp
+    $ mimiry availability --gpu-family A100 --provider verda
     $ mimiry sessions --active
-    $ mimiry session create --image nvcr.io/nvidia/cuda:12.6.2-runtime-ubuntu24.04 \\
-          --gpu T4 --provider gcp --command "nvidia-smi" --wait
+    $ mimiry session create --image docker.io/pytorch/pytorch:2.4.0-cuda12.1-cudnn9-runtime \\
+          --gpu A100_40G_SXM --provider verda --command "nvidia-smi" --wait
     $ mimiry session logs <id> --follow
     $ mimiry session ssh <id>
     $ mimiry session terminate <id>
@@ -29,11 +29,14 @@ from mimiry._auth import get_token
 from mimiry._availability import preflight_gpu_availability
 from mimiry._client import MimiryClient
 from mimiry._config import configure, get_config
-from mimiry._session import TERMINAL_STATES, _extract_state
+from mimiry._session import ERROR_STATES, READY_STATE, TERMINAL_STATES, _extract_state
 from mimiry._ssh import _common_ssh_opts, ssh_target_from_session
 
-# Durable states that mean a session/volume is over (not running, not billing).
-_TERMINAL_STATES = "terminated,completed,failed,stopped,provision_failed"
+# Server-side filter for `sessions --active`: the states that mean a session is
+# over. Derived from the single source of truth in _session so a state added
+# there cannot be silently omitted here — a missing name makes a dead session
+# show up as active.
+_TERMINAL_STATES = ",".join(sorted(TERMINAL_STATES))
 
 
 def _client() -> MimiryClient:
@@ -222,9 +225,32 @@ def cmd_session_ssh(args: argparse.Namespace) -> int:
         payload = c.get_session(args.id)
     state = _extract_state(payload)
     ssh = payload.get("ssh") or {}
-    if state != "started" or not ssh.get("host"):
-        print(f"Session {args.id} is not SSH-ready (state={state}). "
-              "Wait for state=started, or check `mimiry session status`.", file=sys.stderr)
+
+    # Gate on the endpoint, not on the state name. A session that publishes a
+    # host and has not reached a terminal state is worth attempting: refusing
+    # on an unrecognised state strands a paid, reachable instance behind a CLI
+    # that will not connect to it. Only a terminal state — where no host can
+    # exist — is a hard refusal.
+    if state in TERMINAL_STATES:
+        print(
+            f"Session {args.id} has ended (state={state}); there is nothing to connect to. "
+            "Check `mimiry session logs` for what it did.",
+            file=sys.stderr,
+        )
+        return 1
+    if not ssh.get("host"):
+        if payload.get("ssh_enabled") is False:
+            print(
+                f"Session {args.id} was created with --no-ssh, so it has no SSH endpoint.",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                f"Session {args.id} has no SSH endpoint yet (state={state}). "
+                "It is still coming up — retry in a moment, or watch it with "
+                "`mimiry session status`.",
+                file=sys.stderr,
+            )
         return 1
     argv = _build_ssh_argv(payload, cfg.ssh_key_path)
     os.execvp(argv[0], argv)  # replaces this process with ssh
@@ -242,11 +268,24 @@ def cmd_session_create(args: argparse.Namespace) -> int:
         sid = session.get("id", "?")
         print(f"Created session {sid} (state={session.get('state', '?')}).")
         if args.wait:
-            final = _wait_for_started(c, sid)
+            final = _wait_for_ready(c, sid)
             state = _extract_state(final)
-            if state != "started":
-                print(f"Session ended in state={state} before starting.", file=sys.stderr)
+            if state in ERROR_STATES:
+                err = final.get("error")
+                print(
+                    f"Session failed in state={state}."
+                    + (f" {err}" if err else "")
+                    + f"\n  mimiry session logs {sid}",
+                    file=sys.stderr,
+                )
                 return 1
+            if state in TERMINAL_STATES:
+                # The session ran and ended before we saw it ready — normal for
+                # a short `--command` run with auto-terminate. The work was
+                # done, so this is a success, not a failure.
+                print(f"Session ran and ended (state={state}).")
+                print(f"  mimiry session logs {sid}")
+                return 0
             ssh = final.get("ssh") or {}
             if ssh.get("host"):
                 print(f"  SSH ready: mimiry session ssh {sid}")
@@ -308,8 +347,8 @@ def _build_create_payload(args: argparse.Namespace) -> dict:
     return payload
 
 
-def _wait_for_started(client: MimiryClient, session_id: str) -> dict:
-    """Poll until the session is started or reaches a terminal state."""
+def _wait_for_ready(client: MimiryClient, session_id: str) -> dict:
+    """Poll until the session is ready to use or reaches a terminal state."""
     cfg = get_config()
     deadline = time.monotonic() + cfg.timeout_seconds
     last = None
@@ -319,7 +358,7 @@ def _wait_for_started(client: MimiryClient, session_id: str) -> dict:
         if state != last:
             print(f"  state={state}", file=sys.stderr)
             last = state
-        if state == "started" or state in TERMINAL_STATES:
+        if state == READY_STATE or state in TERMINAL_STATES:
             return payload
         time.sleep(cfg.poll_interval_seconds)
     return client.get_session(session_id)
@@ -450,8 +489,8 @@ def main(argv: list[str] | None = None) -> int:
 
     avail = subs.add_parser("availability", help="Show GPU availability (no auth).")
     avail.add_argument("--gpu-family", help="Filter, e.g. T4 or H100.")
-    avail.add_argument("--provider", help="Filter by provider, e.g. gcp.")
-    avail.add_argument("--location", help="Filter by location, e.g. europe-west4-a.")
+    avail.add_argument("--provider", help="Filter by provider, e.g. verda.")
+    avail.add_argument("--location", help="Filter by location, e.g. FIN-02.")
     avail.add_argument("--min-vram", type=int, metavar="GB", help="Minimum VRAM in GB.")
     avail.add_argument("--available-only", action="store_true", help="Only currently-available GPUs.")
     avail.set_defaults(func=cmd_availability)
@@ -499,10 +538,16 @@ def main(argv: list[str] | None = None) -> int:
 
     s_create = sess_subs.add_parser("create", help="Launch a new GPU session.")
     s_create.add_argument("--image", required=True, help="Container image URI.")
-    s_create.add_argument("--gpu", default="T4", help="GPU type (default T4).")
+    s_create.add_argument(
+        "--gpu",
+        required=True,
+        help="GPU type, e.g. A100_40G_SXM. Run `mimiry availability` for what is "
+             "currently offered. No default: a hard-coded one goes stale the moment "
+             "the catalog changes, and every session created without noticing fails.",
+    )
     s_create.add_argument("--gpu-count", type=int, default=1, help="GPU count (default 1).")
-    s_create.add_argument("--provider", help="Provider hint, e.g. gcp.")
-    s_create.add_argument("--location", help="Location hint, e.g. europe-west4-a.")
+    s_create.add_argument("--provider", help="Provider hint, e.g. verda.")
+    s_create.add_argument("--location", help="Location hint, e.g. FIN-02.")
     s_create.add_argument("--command", help="Command to run (omit for an interactive box).")
     s_create.add_argument("--name", help="Session name (default auto-generated).")
     s_create.add_argument("--env", action="append", metavar="KEY=VAL", help="Env var (repeatable).")

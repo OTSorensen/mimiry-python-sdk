@@ -318,20 +318,52 @@ def test_build_ssh_argv():
     assert "2222" in argv  # port wired in
 
 
-def test_session_ssh_execs_when_started(patch_client, monkeypatch):
+def test_session_ssh_execs_when_running(patch_client, monkeypatch):
+    """`running` is the state the live API reports for a usable session."""
     captured = {}
     monkeypatch.setattr(cli.os, "execvp", lambda f, a: captured.update(file=f, argv=a))
-    patch_client(_FakeClient(session={"id": "x", "state": "started",
+    patch_client(_FakeClient(session={"id": "x", "state": "running",
                                       "ssh": {"host": "h", "port": 22, "username": "root"}}))
     cli.main(["session", "ssh", "x"])
     assert captured["file"] == "ssh"
     assert captured["argv"][-1] == "root@h"
 
 
-def test_session_ssh_not_ready_returns_1(patch_client, capsys):
-    patch_client(_FakeClient(session={"id": "x", "state": "provisioned", "ssh": {}}))
+def test_session_ssh_execs_on_unknown_state_when_host_published(patch_client, monkeypatch):
+    """A published host wins over an unrecognised state name.
+
+    The gate is the endpoint, not the vocabulary: refusing a reachable,
+    already-paid-for instance because its state string is new is worse than
+    attempting the connection and letting ssh report the truth.
+    """
+    captured = {}
+    monkeypatch.setattr(cli.os, "execvp", lambda f, a: captured.update(file=f, argv=a))
+    patch_client(_FakeClient(session={"id": "x", "state": "some_new_state",
+                                      "ssh": {"host": "h", "port": 22, "username": "root"}}))
+    cli.main(["session", "ssh", "x"])
+    assert captured["file"] == "ssh"
+
+
+def test_session_ssh_refuses_terminal_session(patch_client, capsys):
+    patch_client(_FakeClient(session={"id": "x", "state": "exited", "ssh": {}}))
     assert cli.main(["session", "ssh", "x"]) == 1
-    assert "not SSH-ready" in capsys.readouterr().err
+    assert "has ended" in capsys.readouterr().err
+
+
+def test_session_ssh_pending_without_host_says_retry(patch_client, capsys):
+    patch_client(_FakeClient(session={"id": "x", "state": "pulling_image", "ssh": {}}))
+    assert cli.main(["session", "ssh", "x"]) == 1
+    err = capsys.readouterr().err
+    assert "no SSH endpoint yet" in err
+    # Must never tell the user to wait for a state the API does not emit.
+    assert "started" not in err
+
+
+def test_session_ssh_names_no_ssh_flag(patch_client, capsys):
+    patch_client(_FakeClient(session={"id": "x", "state": "running",
+                                      "ssh": {}, "ssh_enabled": False}))
+    assert cli.main(["session", "ssh", "x"]) == 1
+    assert "--no-ssh" in capsys.readouterr().err
 
 
 # ────────────────────────── volumes ──────────────────────────
@@ -398,3 +430,95 @@ def test_help_subcommand_prints_full_help(capsys):
 def test_bare_invocation_prints_help(capsys):
     assert cli.main([]) == 0
     assert "usage: mimiry" in capsys.readouterr().out
+
+
+# ───────────────── session create --wait exit semantics ─────────────────
+#
+# The observed live state sequence for a batch session is:
+#   submitted → provisioned → booting → setting_up → pulling_image
+#            → running → exited → terminated
+# A run that reaches `exited`/`terminated` after running its command is a
+# SUCCESS. Reporting it as a failure made every completed batch job look
+# broken to any script checking the exit code.
+
+
+class _StatesClient(_FakeClient):
+    """Yields a scripted state sequence from successive get_session calls."""
+
+    def __init__(self, states, **kw):
+        super().__init__(session={"id": "s1", "state": states[0]}, **kw)
+        self._states = list(states)
+        self._i = 0
+
+    def create_session(self, payload):
+        return {"id": "s1", "status": "creating"}
+
+    def get_session(self, sid):
+        st = self._states[min(self._i, len(self._states) - 1)]
+        self._i += 1
+        out = {"id": "s1", "state": st}
+        if st == "running":
+            out["ssh"] = {"host": "h", "port": 22, "username": "root"}
+        if st == "pull_failed":
+            out["error"] = "docker pull failed for image example/nope"
+        return out
+
+
+def _stub_create_env(monkeypatch):
+    monkeypatch.setattr(cli, "preflight_gpu_availability", lambda *a, **k: "A100_40G_SXM")
+    monkeypatch.setattr(cli, "_pubkey", lambda: "ssh-ed25519 AAAA test@host")
+
+
+def _create_argv():
+    return ["session", "create", "--image", "img", "--gpu", "A100_40G_SXM", "--wait"]
+
+
+def test_create_wait_batch_completion_exits_zero(patch_client, capsys, monkeypatch):
+    """A session that ends before we observe `running` is still a success.
+
+    Short batch commands can finish between polls, so `--wait` first sees a
+    terminal state. That is a completed job, not a failed one.
+    """
+    _stub_create_env(monkeypatch)
+    patch_client(_StatesClient(["submitted", "provisioned", "exited"]))
+    assert cli.main(_create_argv()) == 0
+    assert "ran and ended" in capsys.readouterr().out
+
+
+def test_create_wait_terminated_after_running_exits_zero(patch_client, capsys, monkeypatch):
+    _stub_create_env(monkeypatch)
+    patch_client(_StatesClient(["submitted", "running", "terminated"]))
+    assert cli.main(_create_argv()) == 0
+
+
+def test_create_wait_pull_failure_exits_one_and_names_error(patch_client, capsys, monkeypatch):
+    _stub_create_env(monkeypatch)
+    patch_client(_StatesClient(["submitted", "pulling_image", "pull_failed"]))
+    assert cli.main(_create_argv()) == 1
+    assert "docker pull failed" in capsys.readouterr().err
+
+
+def test_wait_returns_at_running_not_at_end(patch_client, monkeypatch):
+    """`--wait` must return when the session is usable, not when it dies."""
+    _stub_create_env(monkeypatch)
+    c = _StatesClient(["submitted", "running", "exited"])
+    patch_client(c)
+    assert cli.main(_create_argv()) == 0
+    # Stopped polling at `running` (2 calls), never consuming `exited`.
+    assert c._i == 2
+
+
+def test_active_filter_excludes_live_terminal_states():
+    """`sessions --active` must not list dead sessions as active."""
+    for s in ("exited", "pull_failed", "terminated"):
+        assert s in cli._TERMINAL_STATES
+
+
+def test_no_source_expects_the_state_the_api_never_emits():
+    """Guard against reintroducing `started` as a readiness check."""
+    import pathlib
+    src = pathlib.Path(cli.__file__).parent
+    for f in ("_cli.py", "_session.py"):
+        text = (src / f).read_text()
+        assert '== "started"' not in text
+        assert '!= "started"' not in text

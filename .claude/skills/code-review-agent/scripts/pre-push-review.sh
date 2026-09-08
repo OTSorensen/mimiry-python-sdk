@@ -913,11 +913,41 @@ claim_spec() {  # <spec> — 0 on first claim, 1 if this run already scheduled i
   mkdir -p "$SCRATCH/seen"
   mkdir "$SCRATCH/seen/$(printf '%s' "$1" | sha256)" 2>/dev/null
 }
+# The stem is BOUNDED, and a failure that is not "already claimed" ends the
+# loop. Both halves of that sentence are the same bug (2026-09-08): pack 1 of a
+# batched run carried `.claude` plus four :(exclude) terms, which flattens to a
+# 270-character slug — past NAME_MAX (255). `mkdir` failed with ENAMETOOLONG,
+# the loop answered by making the name LONGER, and the run spun forking mkdir
+# forever. It hung inside the first command substitution of run_one_pack, so no
+# builder and no reviewer was ever started: nothing to see in `pgrep`, no
+# packlog, no report, and — as a pre-push hook — a `git push` that never
+# returned. One occurrence sat wedged for 3d17h. Every existing net missed it:
+# the INT/TERM trap needs an interrupt, and both exit-7 gates need the run to
+# FINISH. A slug long enough to claim but too long for
+# ".claude/review-reports/$STAMP-<slug>.md" fails closed at the `tee` instead —
+# UNDETERMINED, not a hang — but it wastes a reviewer call, so the cap leaves
+# room for the stamp, the "-<k>" suffix and the extension.
+SLUG_STEM_MAX=180
 claim_report() {  # <slug> — prints a slug no other pack in this run holds
-  local slug="$1" k=1
+  local base="$1" slug k=1
+  # Truncating alone would collide two long specs onto one report — the very
+  # thing this function exists to prevent — so the trimmed stem carries a hash
+  # of the WHOLE slug.
+  if [ "${#base}" -gt "$SLUG_STEM_MAX" ]; then
+    base="${base:0:$SLUG_STEM_MAX}-$(printf '%s' "$1" | sha256 | cut -c1-8)"
+  fi
+  slug="$base"
   mkdir -p "$SCRATCH/slug"
   while ! mkdir "$SCRATCH/slug/$slug" 2>/dev/null; do
-    k=$((k + 1)); slug="$1-$k"
+    # Not EEXIST: the name itself is unusable (a full disk, a lost scratch dir,
+    # a length the cap above did not foresee). Looping cannot fix any of those.
+    # Return a name unique to this process and let the pack proceed — a report
+    # written under an odd name beats a push that never returns.
+    if [ ! -d "$SCRATCH/slug/$slug" ]; then
+      printf '%s' "$base-$$"
+      return 0
+    fi
+    k=$((k + 1)); slug="$base-$k"
   done
   printf '%s' "$slug"
 }
