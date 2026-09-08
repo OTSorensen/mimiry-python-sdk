@@ -260,10 +260,21 @@ def cmd_session_ssh(args: argparse.Namespace) -> int:
 def cmd_session_create(args: argparse.Namespace) -> int:
     payload = _build_create_payload(args)
     with _client() as c:
+        # A volume can only be mounted by a session in its own location. Settle
+        # that first, so the GPU availability check below runs against the
+        # location the session will really use — and so a conflict is refused
+        # before the session exists rather than killed seconds after.
+        location = _preflight_volume_location(
+            c, payload.get("volume_mounts") or [], args.location
+        ) or args.location
+        if location:
+            payload["gpu"]["location"] = location
         # Resolve a GPU family alias (e.g. "T4") to the concrete catalog name
         # the API requires, and fail fast on an impossible combo. Best-effort.
-        resolved_gpu = preflight_gpu_availability(c, args.gpu, args.provider, args.location)
+        resolved_gpu = preflight_gpu_availability(c, args.gpu, args.provider, location)
         payload["gpu"]["types"] = [resolved_gpu]
+        if location and location != args.location:
+            print(f"Using location {location} — the attached volume lives there.")
         session = c.create_session(payload)
         sid = session.get("id", "?")
         print(f"Created session {sid} (state={session.get('state', '?')}).")
@@ -298,6 +309,64 @@ def cmd_session_create(args: argparse.Namespace) -> int:
 
 
 # ── session helpers ──
+
+
+def _preflight_volume_location(
+    client: MimiryClient, mounts: list, requested_location: str | None
+) -> str | None:
+    """Reconcile the session's location with the locations of the volumes it
+    mounts, returning the location to use (or ``None`` to leave it as-is).
+
+    A volume lives in one location and the platform refuses to attach it
+    anywhere else — but only after the session has been created, so the user
+    watches a session appear and die instead of being told upfront. When no
+    location was requested, the volume's own location is adopted; when one was
+    requested and disagrees, the session is refused before it exists.
+
+    Best-effort in one direction only: a definite mismatch raises, but any
+    failure to *read* the volumes (network, unknown name, a payload without a
+    location) leaves the request untouched and lets the platform decide.
+    """
+    names = [m.get("volume_name") for m in mounts if m.get("volume_name")]
+    if not names:
+        return None
+
+    try:
+        volumes = client.list_volumes()
+    except Exception:
+        return None
+
+    by_name = {v.get("name"): v for v in volumes if isinstance(v, dict) and v.get("name")}
+    located: dict[str, str] = {}
+    for name in names:
+        loc = (by_name.get(name) or {}).get("location")
+        if loc:
+            located[name] = loc
+
+    if not located:
+        return None
+
+    distinct = set(located.values())
+    if len(distinct) > 1:
+        detail = ", ".join(f"{n} in {loc}" for n, loc in sorted(located.items()))
+        raise RuntimeError(
+            f"the requested volumes are in different locations ({detail}); a session "
+            f"runs in one location and can only mount volumes that live there. "
+            f"Attach volumes from a single location, or create the missing one with "
+            f"`mimiry volume create --location <location>`."
+        )
+
+    volume_location = distinct.pop()
+    if requested_location and requested_location != volume_location:
+        names_txt = ", ".join(sorted(located))
+        raise RuntimeError(
+            f"--location {requested_location} conflicts with volume {names_txt}, which "
+            f"is in {volume_location}. A volume can only be mounted by a session in its "
+            f"own location. Re-run with --location {volume_location}, or create a volume "
+            f"in {requested_location} with `mimiry volume create --location "
+            f"{requested_location}`."
+        )
+    return volume_location
 
 
 def _build_ssh_argv(payload: dict, key_path) -> list[str]:
@@ -547,7 +616,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     s_create.add_argument("--gpu-count", type=int, default=1, help="GPU count (default 1).")
     s_create.add_argument("--provider", help="Provider hint, e.g. verda.")
-    s_create.add_argument("--location", help="Location hint, e.g. FIN-02.")
+    s_create.add_argument(
+        "--location",
+        help="Location to run in, e.g. FIN-02. Defaults to the location of an "
+             "attached --volume, since a volume can only be mounted where it lives.",
+    )
     s_create.add_argument("--command", help="Command to run (omit for an interactive box).")
     s_create.add_argument("--name", help="Session name (default auto-generated).")
     s_create.add_argument("--env", action="append", metavar="KEY=VAL", help="Env var (repeatable).")
@@ -582,7 +655,11 @@ def main(argv: list[str] | None = None) -> int:
     v_create.add_argument("--name", required=True, help="Volume name.")
     v_create.add_argument("--size-gb", type=int, required=True, help="Size in GB.")
     v_create.add_argument("--provider", help="Provider hint.")
-    v_create.add_argument("--location", help="Location hint.")
+    v_create.add_argument(
+        "--location",
+        help="Location to create the volume in, e.g. FIN-02. Not a hint: a "
+             "volume can only be mounted by a session in this same location.",
+    )
     v_create.set_defaults(func=cmd_volume_create)
 
     v_extend = vol_subs.add_parser("extend", help="Grow a volume (cannot shrink).")

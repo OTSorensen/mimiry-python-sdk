@@ -306,6 +306,84 @@ def test_session_create_posts_and_prints(patch_client, monkeypatch, capsys):
     assert "sess-9" in capsys.readouterr().out
 
 
+# ──────────────── sessions: volume location preflight ────────────────
+
+# A volume can only be mounted by a session in its own location, and the
+# platform only says so after the session exists. These cover settling it
+# beforehand.
+
+LOCATED_VOLUMES = [
+    {"id": "vol-1", "name": "data", "location": "FIN-01", "state": "provisioned"},
+    {"id": "vol-2", "name": "other", "location": "FIN-02", "state": "provisioned"},
+]
+
+
+def _volume_create_argv(*extra):
+    return ["session", "create", "--image", "img:1", "--gpu", "T4", *extra]
+
+
+def test_create_adopts_the_volumes_location_when_none_was_given(
+    patch_client, monkeypatch, capsys
+):
+    monkeypatch.setattr(cli, "_pubkey", lambda: "ssh-ed25519 AAAA test")
+    fake = patch_client(_FakeClient(volumes=LOCATED_VOLUMES))
+    rc = cli.main(_volume_create_argv("--volume", "data:/data"))
+    assert rc == 0
+    assert fake.calls["create_session"]["gpu"]["location"] == "FIN-01"
+    assert "FIN-01" in capsys.readouterr().out
+
+
+def test_create_refuses_a_location_the_volume_cannot_be_mounted_in(
+    patch_client, monkeypatch, capsys
+):
+    monkeypatch.setattr(cli, "_pubkey", lambda: "ssh-ed25519 AAAA test")
+    fake = patch_client(_FakeClient(volumes=LOCATED_VOLUMES))
+    rc = cli.main(_volume_create_argv("--volume", "data:/data", "--location", "FIN-02"))
+    assert rc == 1
+    # Refused before the session exists — that is the whole point.
+    assert "create_session" not in fake.calls
+    err = capsys.readouterr().err
+    assert "FIN-02" in err and "FIN-01" in err
+
+
+def test_create_refuses_volumes_from_two_locations(patch_client, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "_pubkey", lambda: "ssh-ed25519 AAAA test")
+    fake = patch_client(_FakeClient(volumes=LOCATED_VOLUMES))
+    rc = cli.main(_volume_create_argv("--volume", "data:/a", "--volume", "other:/b"))
+    assert rc == 1
+    assert "create_session" not in fake.calls
+    assert "different locations" in capsys.readouterr().err
+
+
+def test_create_proceeds_when_location_and_volume_agree(patch_client, monkeypatch):
+    monkeypatch.setattr(cli, "_pubkey", lambda: "ssh-ed25519 AAAA test")
+    fake = patch_client(_FakeClient(volumes=LOCATED_VOLUMES))
+    assert cli.main(_volume_create_argv("--volume", "data:/data", "--location", "FIN-01")) == 0
+    assert fake.calls["create_session"]["gpu"]["location"] == "FIN-01"
+
+
+def test_create_is_unaffected_when_the_volume_list_cannot_be_read(
+    patch_client, monkeypatch
+):
+    """A preflight is a convenience: if it can't run, the request still goes."""
+    monkeypatch.setattr(cli, "_pubkey", lambda: "ssh-ed25519 AAAA test")
+
+    class _Broken(_FakeClient):
+        def list_volumes(self, **params):
+            raise RuntimeError("volumes endpoint down")
+
+    fake = patch_client(_Broken())
+    assert cli.main(_volume_create_argv("--volume", "data:/data", "--location", "FIN-02")) == 0
+    assert fake.calls["create_session"]["gpu"]["location"] == "FIN-02"
+
+
+def test_create_without_volumes_does_not_touch_the_location(patch_client, monkeypatch):
+    monkeypatch.setattr(cli, "_pubkey", lambda: "ssh-ed25519 AAAA test")
+    fake = patch_client(_FakeClient(volumes=LOCATED_VOLUMES))
+    assert cli.main(_volume_create_argv("--command", "echo hi")) == 0
+    assert "location" not in fake.calls["create_session"]["gpu"]
+
+
 # ────────────────────────── sessions: ssh ──────────────────────────
 
 

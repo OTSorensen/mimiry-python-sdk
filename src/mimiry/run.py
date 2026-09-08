@@ -21,6 +21,8 @@ from mimiry._availability import preflight_gpu_availability
 from mimiry._client import MimiryClient
 from mimiry._config import Config, get_config
 from mimiry._session import (
+    TERMINAL_STATES,
+    make_terminal_check,
     raise_if_ended_before_result,
     raise_if_failed,
     wait_for_ssh_ready,
@@ -29,6 +31,7 @@ from mimiry._session import (
 from mimiry._ssh import (
     CONTAINER_HOLD_TIMEOUT_SECONDS,
     DONE_FLAG,
+    SSHError,
     close_control_channel,
     fetch_remote_file,
     open_control_channel,
@@ -176,19 +179,17 @@ def run(
 
             target = ssh_target_from_session(ssh_ready, config.ssh_key_path)
             _log(f"sshing into {target.host}:{target.port}")
-            wait_for_sshd(target)
+            terminal_check = make_terminal_check(client, session_id)
+            try:
+                wait_for_sshd(target, terminal_check=terminal_check)
+            except SSHError:
+                # A host that vanished because the container died is explained
+                # by the container's logs, not by an SSH transport error.
+                raise_if_ended_before_result(client.get_session(session_id), client=client)
+                raise
 
             _log("opening SSH control channel")
             target = open_control_channel(target)
-
-            _terminal_states = {"terminated", "completed", "failed", "stopped", "provision_failed"}
-
-            def _terminal_check() -> str | None:
-                try:
-                    s = (client.get_session(session_id).get("state") or "").lower()
-                except Exception:
-                    return None
-                return s if s in _terminal_states else None
 
             try:
                 _log(f"waiting for {_RUN_EXIT_FILE}")
@@ -196,7 +197,7 @@ def run(
                     target,
                     _RUN_EXIT_FILE,
                     max_wait_seconds=timeout_s,
-                    terminal_check=_terminal_check,
+                    terminal_check=terminal_check,
                 )
 
                 _log("fetching output")
@@ -224,7 +225,7 @@ def run(
             )
         finally:
             state = (client.get_session(session_id).get("state") or "").lower()
-            if state not in {"terminated", "completed", "failed", "stopped", "provision_failed"}:
+            if state not in TERMINAL_STATES:
                 try:
                     client.terminate_session(session_id)
                 except Exception:

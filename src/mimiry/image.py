@@ -15,6 +15,8 @@ from __future__ import annotations
 import shlex
 from dataclasses import dataclass, field
 
+from mimiry.exceptions import MimiryError
+
 
 @dataclass
 class Image:
@@ -22,6 +24,7 @@ class Image:
     _apt_packages: list[str] = field(default_factory=list)
     _pip_packages: list[str] = field(default_factory=list)
     _env: dict[str, str] = field(default_factory=dict)
+    _python_version: str | None = None
 
     @classmethod
     def from_registry(cls, uri: str) -> "Image":
@@ -29,6 +32,24 @@ class Image:
         Mimiry compute backend's registry-resolver accepts (e.g. nvcr.io, docker.io).
         """
         return cls(uri=uri)
+
+    def python_version(self, version: str) -> "Image":
+        """Declare the Python this image ships (``\"3.11\"``), enabling a local
+        compatibility check before a session is ever created.
+
+        A remote call ships the caller's function as a cloudpickle blob, and
+        those blobs do not load on a different Python minor version — the
+        container dies on arrival. Declaring the version turns that into an
+        error raised before anything is paid for. Undeclared images are still
+        checked, but only once the container is running.
+        """
+        self._python_version = _normalize_python_version(version)
+        return self
+
+    @property
+    def declared_python_version(self) -> str | None:
+        """The ``major.minor`` declared via :meth:`python_version`, if any."""
+        return self._python_version
 
     def pip_install(self, *packages: str) -> "Image":
         """Append pip packages to install at container start. Accepts version
@@ -78,3 +99,37 @@ def normalize_image(image: "Image | str") -> Image:
     if isinstance(image, Image):
         return image
     return Image.from_registry(image)
+
+
+def preflight_python_version(image: Image, caller_version: str) -> None:
+    """Refuse a remote call whose caller Python cannot match the image's.
+
+    Only images that declared their Python (:meth:`Image.python_version`) can
+    be judged here; an undeclared image is checked inside the container
+    instead, which costs a provisioning round-trip. Declaring it is what moves
+    the failure to before the money is spent.
+    """
+    declared = image.declared_python_version
+    if declared is None or declared == caller_version:
+        return
+    raise MimiryError(
+        f"Python version mismatch: you are calling from Python {caller_version}, "
+        f"but image {image.uri!r} declares Python {declared}. Your function travels "
+        f"as a cloudpickle blob, which does not load across minor versions — the "
+        f"container would crash on arrival and you would still be charged for it. "
+        f"Run your script on Python {declared}, or pick an image that ships "
+        f"Python {caller_version}."
+    )
+
+
+def _normalize_python_version(version: str) -> str:
+    """Reduce a declared version to ``major.minor``, which is the granularity
+    that decides whether a cloudpickle payload loads. ``\"3.11.9\"`` and
+    ``\"3.11\"`` are the same container as far as this check is concerned.
+    """
+    parts = str(version).strip().split(".")
+    if len(parts) < 2 or not all(p.isdigit() for p in parts[:2]):
+        raise ValueError(
+            f"python_version must look like '3.11' (got: {version!r})"
+        )
+    return f"{int(parts[0])}.{int(parts[1])}"

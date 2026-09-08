@@ -21,6 +21,8 @@ from mimiry._client import MimiryClient
 from mimiry._config import get_config
 from mimiry._serialization import (
     build_bootstrap_script,
+    caller_python_env_var,
+    caller_python_version,
     new_result_hmac_key,
     pack_call,
     parse_result,
@@ -29,6 +31,8 @@ from mimiry._serialization import (
     verify_result_envelope,
 )
 from mimiry._session import (
+    TERMINAL_STATES,
+    make_terminal_check,
     raise_if_ended_before_result,
     raise_if_failed,
     wait_for_ssh_ready,
@@ -36,6 +40,7 @@ from mimiry._session import (
 )
 from mimiry._ssh import (
     RESULT_FILE,
+    SSHError,
     close_control_channel,
     fetch_remote_file,
     open_control_channel,
@@ -45,7 +50,7 @@ from mimiry._ssh import (
     wait_for_sshd,
 )
 from mimiry.exceptions import ResultIntegrityError, ResultParseError, SessionError
-from mimiry.image import Image, normalize_image
+from mimiry.image import Image, normalize_image, preflight_python_version
 
 
 def _public_key(ssh_key_path: Path) -> str:
@@ -194,10 +199,21 @@ def _run_remote(fn: Callable, cfg: FunctionConfig, args: tuple, kwargs: dict) ->
 
     token = get_token(config.ssh_key_path, config.api_base)
     image = normalize_image(cfg.image)
+    # Before anything is created or charged: a caller Python that the image's
+    # declared Python can't load is a guaranteed crash on arrival.
+    caller_py = caller_python_version()
+    preflight_python_version(image, caller_py)
     payload_b64 = pack_call(fn, args, kwargs)
     hmac_key = new_result_hmac_key()
     command = build_bootstrap_script(image_install_prefix=image.install_prefix())
-    env_vars = {payload_env_var(): payload_b64, result_hmac_env_var(): hmac_key}
+    env_vars = {
+        payload_env_var(): payload_b64,
+        result_hmac_env_var(): hmac_key,
+        # The container re-checks this against its own interpreter, so an
+        # undeclared image still fails with an explanation rather than a
+        # segfault the SDK would misreport as an SSH problem.
+        caller_python_env_var(): caller_py,
+    }
 
     session_payload = _build_session_payload(cfg, command, env_vars)
 
@@ -241,19 +257,18 @@ def _run_remote(fn: Callable, cfg: FunctionConfig, args: tuple, kwargs: dict) ->
 
             target = ssh_target_from_session(ssh_ready, config.ssh_key_path)
             _log(f"sshing into {target.host}:{target.port}")
-            wait_for_sshd(target)
+            terminal_check = make_terminal_check(client, session_id)
+            try:
+                wait_for_sshd(target, terminal_check=terminal_check)
+            except SSHError:
+                # If the box is gone because the container died, the container's
+                # own logs say why — a transport error would send the user
+                # debugging their network instead.
+                raise_if_ended_before_result(client.get_session(session_id), client=client)
+                raise
 
             _log("opening SSH control channel (multiplexing for the bootstrap install storm)")
             target = open_control_channel(target)
-
-            _terminal_states = {"terminated", "completed", "failed", "stopped", "provision_failed"}
-
-            def _terminal_check() -> str | None:
-                try:
-                    s = (client.get_session(session_id).get("state") or "").lower()
-                except Exception:
-                    return None
-                return s if s in _terminal_states else None
 
             try:
                 _log(f"waiting for {RESULT_FILE}")
@@ -261,7 +276,7 @@ def _run_remote(fn: Callable, cfg: FunctionConfig, args: tuple, kwargs: dict) ->
                     target,
                     RESULT_FILE,
                     max_wait_seconds=timeout,
-                    terminal_check=_terminal_check,
+                    terminal_check=terminal_check,
                 )
 
                 _log("fetching result")
@@ -294,7 +309,7 @@ def _run_remote(fn: Callable, cfg: FunctionConfig, args: tuple, kwargs: dict) ->
             raise
         finally:
             state = (client.get_session(session_id).get("state") or "").lower()
-            if state not in {"terminated", "completed", "failed", "stopped", "provision_failed"}:
+            if state not in TERMINAL_STATES:
                 try:
                     client.terminate_session(session_id)
                 except Exception:

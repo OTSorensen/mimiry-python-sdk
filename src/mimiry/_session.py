@@ -157,6 +157,30 @@ def wait_for_ssh_ready(
         time.sleep(min(config.poll_interval_seconds, 3.0))
 
 
+def make_terminal_check(
+    client: MimiryClient, session_id: str
+) -> Callable[[], str | None]:
+    """Return a callable that reports the session's state when it is terminal.
+
+    Handed to the SSH waiters so they abandon a dead session instead of
+    retrying against a machine that no longer exists. It reads
+    :data:`TERMINAL_STATES` rather than restating the list: a second copy of
+    the state names is how a state the API really emits (``exited``,
+    ``pull_failed``) gets missed by one caller and honoured by another.
+
+    Never raises — a failed poll returns ``None`` so the caller keeps waiting.
+    """
+
+    def _check() -> str | None:
+        try:
+            state = _extract_state(client.get_session(session_id)).lower()
+        except Exception:
+            return None
+        return state if state in TERMINAL_STATES else None
+
+    return _check
+
+
 def fetch_events(client: MimiryClient, session_id: str) -> list:
     """Fetch the session's full event history. Useful on failure (GCP capacity, etc.)."""
     payload = client.get_session(session_id, events_tail=-1)

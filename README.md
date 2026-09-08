@@ -113,11 +113,20 @@ image. The SDK ships your function to the GPU with `cloudpickle`, which can't
 move code objects across Python versions — e.g. a function pickled on 3.12
 won't load on 3.10.
 
-You don't need to think about this with the default image: it ships Python
-3.12, matching recent Ubuntu / Debian / Fedora. It only matters if you set
-`image=` yourself — pick one whose `python3` matches your local interpreter.
-Confirm with `python3 --version` locally and inside the image; a mismatch
-shows up as a failure to deserialize your function.
+The SDK checks this for you, and how early it can check depends on what you
+tell it. Declare the image's Python and a mismatch is refused before a session
+is created, so a doomed run costs nothing:
+
+```python
+image = mimiry.Image.from_registry(
+    "docker.io/pytorch/pytorch:2.4.0-cuda12.1-cudnn9-runtime"
+).python_version("3.11")
+```
+
+Without that declaration the check still happens, but inside the container —
+you pay for the session, and the call fails naming both versions instead of
+crashing on arrival. Confirm a version with `python3 --version` locally and
+inside the image.
 
 ## Quickstart — one-shot function
 
