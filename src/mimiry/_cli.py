@@ -94,11 +94,30 @@ def cmd_availability(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_token(_: argparse.Namespace) -> int:
-    """Print a fresh JWT — useful for piping into curl during debugging."""
+def cmd_token(args: argparse.Namespace) -> int:
+    """Print a JWT — useful for piping into curl during debugging."""
     cfg = get_config()
-    token = get_token(cfg.ssh_key_path, cfg.api_base)
+    token = get_token(cfg.ssh_key_path, cfg.api_base, use_cache=not args.refresh)
     print(token.access_token)
+    return 0
+
+
+def cmd_logout(_: argparse.Namespace) -> int:
+    """Discard cached JWTs. The SSH key and config file are left untouched."""
+    from mimiry import _token_cache
+
+    removed = _token_cache.clear()
+    print(f"Cleared {removed} cached token{'' if removed == 1 else 's'}.")
+    # Say what this does NOT do. These are bearer credentials with up to an
+    # hour of life, and `mimiry token` exists to pipe them into other tools —
+    # so copies routinely outlive the cache in shell history and scrollback.
+    # Mimiry exposes no revocation endpoint, so a user reaching for `logout`
+    # after a suspected leak needs to know the real remedy is key rotation.
+    print(
+        "Any token already issued stays valid until it expires (up to 1h) — "
+        "Mimiry has no revocation endpoint. If a token may have leaked, "
+        "rotate your SSH key in the portal."
+    )
     return 0
 
 
@@ -437,7 +456,17 @@ def main(argv: list[str] | None = None) -> int:
     avail.add_argument("--available-only", action="store_true", help="Only currently-available GPUs.")
     avail.set_defaults(func=cmd_availability)
 
-    subs.add_parser("token", help="Print a fresh JWT (for debugging).").set_defaults(func=cmd_token)
+    tok = subs.add_parser("token", help="Print a JWT (for debugging).")
+    tok.add_argument(
+        "--refresh",
+        action="store_true",
+        help="Bypass the on-disk cache and force a fresh SSH exchange.",
+    )
+    tok.set_defaults(func=cmd_token)
+
+    subs.add_parser(
+        "logout", help="Clear cached JWTs (leaves your SSH key and config intact)."
+    ).set_defaults(func=cmd_logout)
     setup_help = "Interactive auth setup wizard (generate/register SSH key, verify)."
     subs.add_parser("setup", help=setup_help).set_defaults(func=cmd_setup)
     subs.add_parser("init", help="Alias for `setup`.").set_defaults(func=cmd_setup)

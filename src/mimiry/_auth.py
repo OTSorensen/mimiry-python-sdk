@@ -8,6 +8,11 @@ the systems Mimiry users actually run on.
 
 Tokens last 1 hour (Mimiry default). The Token class refreshes itself when
 within 5 minutes of expiry.
+
+Exchanges are cached on disk (see ``_token_cache``) and keyed by SSH key
+fingerprint + API base. The live auth endpoint rate-limits hard, so without a
+cache a short run of CLI commands — each its own process — trips a 429 on the
+token endpoint and fails a command the user never associated with auth.
 """
 
 from __future__ import annotations
@@ -24,6 +29,7 @@ from pathlib import Path
 
 import httpx
 
+from mimiry import _token_cache
 from mimiry._config import DEFAULT_API_BASE
 from mimiry.exceptions import AuthError
 
@@ -164,9 +170,14 @@ def exchange_ssh_for_token(
         raise AuthError(f"token exchange response missing access_token: {body}")
 
     expires_in = body.get("expires_in", _DEFAULT_TOKEN_TTL_SECONDS)
+    expires_at = time.time() + float(expires_in)
+
+    # Best-effort: a failed write just means the next process re-exchanges.
+    _token_cache.store(fingerprint, api_base, access_token, expires_at)
+
     return Token(
         access_token=access_token,
-        expires_at=time.time() + float(expires_in),
+        expires_at=expires_at,
         fingerprint=fingerprint,
         ssh_key_path=priv,
         api_base=api_base,
@@ -176,8 +187,19 @@ def exchange_ssh_for_token(
 def get_token(
     ssh_key_path: str | Path | None = None,
     api_base: str = DEFAULT_API_BASE,
+    *,
+    use_cache: bool = True,
 ) -> Token:
-    """Get a fresh Token. Falls back to ``MIMIRY_SSH_KEY`` env var when ``ssh_key_path`` is None."""
+    """Return a usable Token, reusing a cached JWT when one is still valid.
+
+    Falls back to ``MIMIRY_SSH_KEY`` when ``ssh_key_path`` is None. Pass
+    ``use_cache=False`` to force a fresh exchange.
+
+    The cache lookup needs the key's fingerprint, which is a local
+    ``ssh-keygen -lf`` call — cheap, and unlike signing it makes no network
+    request. A hit therefore skips both the signature and the rate-limited
+    ``/api/v1/auth/token`` round trip.
+    """
     if ssh_key_path is None:
         env_key = os.environ.get("MIMIRY_SSH_KEY")
         if not env_key:
@@ -186,4 +208,28 @@ def get_token(
                 "or call mimiry.configure(ssh_key_path=...) first"
             )
         ssh_key_path = env_key
+
+    if use_cache:
+        api_base_norm = api_base.rstrip("/")
+        try:
+            priv = _normalize_key_path(ssh_key_path)
+            fingerprint = _fingerprint(Path(f"{priv}.pub"))
+        except AuthError:
+            # Can't identify the key (missing/unreadable) — let the normal
+            # exchange path raise the precise error rather than masking it here.
+            priv = None
+            fingerprint = None
+
+        if fingerprint is not None and priv is not None:
+            cached = _token_cache.load(fingerprint, api_base_norm)
+            if cached is not None:
+                access_token, expires_at = cached
+                return Token(
+                    access_token=access_token,
+                    expires_at=expires_at,
+                    fingerprint=fingerprint,
+                    ssh_key_path=priv,
+                    api_base=api_base_norm,
+                )
+
     return exchange_ssh_for_token(ssh_key_path, api_base)
