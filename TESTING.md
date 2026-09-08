@@ -73,13 +73,19 @@ mimiry session create \
 ## 5. Volumes (cheap — storage only, no GPU)
 
 ```bash
-mimiry volume create --name test-vol --size-gb 50
+mimiry volume create --name test-vol --size-gb 100
 ```
+
+**Sizes below 100 GB are rejected by the API, not by the SDK.** The spec sets
+`minimum: 100` (max 10000) on both `size_gb` and `new_size_gb`, because that is
+the smallest volume the underlying provider accepts. An earlier version of this
+sheet used `--size-gb 50` and a shrink-to-10 check, both of which fail for that
+reason — a checklist error, not a defect. Use 100 as the floor everywhere here.
 
 - [ ] `volume create` returns JSON with a new `id`, `state: submitted`→`provisioned`
 - [ ] `mimiry volume list` shows it (table); `--json` gives raw
 - [ ] `mimiry volume status <id>` shows detail incl. `size_gb`, `attached_to`
-- [ ] `mimiry volume extend <id> --size-gb 100` → size grows; shrinking (e.g. `--size-gb 10`) is rejected by the API
+- [ ] `mimiry volume extend <id> --size-gb 200` → size grows; shrinking (e.g. `--size-gb 100`) is rejected by the API
 - [ ] 💸 (optional) attach at launch: `mimiry session create --image …ubuntu24.04 --gpu T4 --provider gcp --volume test-vol:/mnt/data --command "df -h /mnt/data" --wait` → logs show the mount
 - [ ] `mimiry volume delete <id>` → `Delete requested…`; then `mimiry volume list --all` shows it `deleted`
 

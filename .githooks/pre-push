@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# mimiry-python-sdk pre-push review gate.
+# Delegates to the code-review-agent skill's pre-push-review.sh.
+#
+# FINDINGS never block a push (unless CRA_BLOCKING=1 and a high finding exists).
+# The HOOK does — in six cases. This list is what a future session reads before
+# touching the file that decides what runs on every push; CLAUDE.md § Code
+# review carries the same table, and the two must be kept in step.
+#
+#   exit 4  a ticket was named but could not be read.
+#   exit 5  no ticket resolvable — commit docs/tickets/<slug>.md with the work
+#           (slug appearing in the branch name), or pass CRA_TICKET=<path> when
+#           it landed in an earlier push. CRA_REQUIRE_TICKET=0 downgrades it to
+#           an in-report finding.
+#   exit 6  SCOPE GATE: the range is far larger than a push candidate should be
+#           (>40 commits / >120 files) — almost always a wrong base.
+#           CRA_FULL_REVIEW=1 is the deliberate override.
+#   exit 7  the run reviewed NOTHING. A review that examined no code must not be
+#           credited as one.
+#   exit 8  a partial CRA_HEAD range on a push. A push sends HEAD, so a review
+#           of less than HEAD must not accompany it.
+#   exit 10 an AGENT pushing in the FOREGROUND without CRA_LONG_RUN_ACK=1 — see
+#           below.
+#
+# NOT in the list, deliberately: the delegated script exits 3 when the skill
+# directory is missing. That is an ENVIRONMENTAL abort, not a policy refusal —
+# nothing about the change is being judged — so it is named here and not
+# counted among the six.
+#
+# The review base (origin/<branch> when it exists, else origin/main, else bare
+# main) is resolved by the SCRIPT, not here. Two defaults in two files is how a
+# hand-set CRA_BASE writes an incremental marker the other side cannot trust,
+# which re-reviews an already-reviewed branch from scratch. One default, one
+# home; this hook only delegates.
+
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+REVIEW_SCRIPT="$REPO_ROOT/.claude/skills/code-review-agent/scripts/pre-push-review.sh"
+
+if [ ! -f "$REVIEW_SCRIPT" ]; then
+  cat >&2 <<'MISSING'
+
+PRE-PUSH REVIEW: the code-review-agent skill is not installed (exit 3).
+
+Expected: .claude/skills/code-review-agent/scripts/pre-push-review.sh
+
+Install it from the code-review-agent repo, but READ .claude/skills/PROVENANCE.md
+FIRST: this repo's copy carries deliberate divergences (the third specialist is
+api-contract, not supabase-rls) that a plain re-copy silently reverts, leaving
+the roster half-swapped and the review weaker than it looks.
+
+  # after reading PROVENANCE.md, and reapplying the divergences it lists:
+  cp -r ~/projects/code-review-agent/skills/code-review-agent .claude/skills/
+
+MISSING
+  exit 3
+fi
+
+# An agent's shell tool kills a foreground command at ~10 minutes; this review
+# runs far longer, and the push dies with it — leaving the work unpushed and
+# the reason unclear. Refuse early with the fix rather than fail late.
+if [ -n "${CLAUDECODE:-}" ] && [ -z "${CRA_LONG_RUN_ACK:-}" ]; then
+  cat >&2 <<'REFUSED'
+
+PRE-PUSH REVIEW: refusing a foreground agent push (exit 10).
+
+This hook runs the code review, which takes far longer than a foreground agent
+shell allows (killed at ~10 minutes, taking the push with it).
+
+Re-run it BACKGROUNDED and acknowledge the wait:
+
+    CRA_LONG_RUN_ACK=1 git push
+
+Finished packs from any killed run are reused, so nothing already reviewed is
+reviewed again. Only the push was lost.
+
+REFUSED
+  exit 10
+fi
+
+CRA_VIA_HOOK=1 exec bash "$REVIEW_SCRIPT" "$@"

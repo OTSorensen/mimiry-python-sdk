@@ -50,3 +50,6 @@ drafts/
 Thumbs.db
 
 .build-venv/
+
+# Code review working artifacts (not source)
+.claude/review-reports/
