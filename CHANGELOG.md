@@ -12,7 +12,7 @@ roughly follows [Keep a Changelog](https://keepachangelog.com/) and
   `nvcr.io/nvidia/cuda` image the platform cannot pull without registry
   credentials, so a bare decorator always failed after a paid session. The
   defaults are now the `A100` family and `nvcr.io/nvidia/pytorch:24.01-py3`
-  (Python 3.10); docstrings, README and `examples/` no longer suggest
+  (Python 3.10); docstrings, README, TESTING.md and `examples/` no longer suggest
   `provider="gcp"`, which does not exist.
 - **A GPU family with several sizes is no longer refused as ambiguous.**
   `gpu="A100"` matches both the 40 GB and 80 GB A100 on the live catalog and

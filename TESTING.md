@@ -54,8 +54,8 @@ mimiry volume list
 | Step | Command | Expect |
 |---|---|---|
 | - [ ] | `mimiry availability` | all GPU models |
-| - [ ] | `mimiry availability --gpu-family T4` | only T4 |
-| - [ ] | `mimiry availability --provider gcp --available-only` | only available gcp GPUs |
+| - [ ] | `mimiry availability --gpu-family A100` | only A100 |
+| - [ ] | `mimiry availability --provider verda --available-only` | only available verda GPUs |
 | - [ ] | `mimiry availability --min-vram 40` | only ≥40 GB cards |
 | - [ ] | `mimiry availability --location europe-west4-a` | only that location |
 
@@ -72,20 +72,20 @@ mimiry volume list
 
 ## 4. Sessions — create / logs / ssh / terminate 💸
 
-> Uses a real T4. Pin `--provider gcp` (T4 is gcp-only). Cold start ~2 min.
+> Uses a real A100 on verda. Cold start is 5–8 min, most of it the image pull.
 
 ```bash
 mimiry session create \
-  --image nvcr.io/nvidia/cuda:12.6.2-runtime-ubuntu24.04 \
-  --gpu T4 --provider gcp --location europe-west4-a \
+  --image nvcr.io/nvidia/pytorch:24.01-py3 \
+  --gpu A100 --provider verda --location FIN-02 \
   --command "nvidia-smi && echo DONE" --wait
 ```
 
-- [ ] 💸 `create … --wait` prints `Created session <id>`, streams `state=…`, ends at `state=started`, prints the management hints
+- [ ] 💸 `create … --wait` prints `Created session <id>`, streams `state=…`, ends at `state=running`, prints the management hints
 - [ ] `mimiry session logs <id>` shows the container output (eventually `nvidia-smi` + `DONE`)
 - [ ] `mimiry session logs <id> --follow` streams live, then prints `-- session … --` when it ends (Ctrl-C to stop early)
 - [ ] `mimiry sessions --active` shows it while running
-- [ ] 💸 (interactive box) `mimiry session create --image …cuda…ubuntu24.04 --gpu T4 --provider gcp --wait` then **`mimiry session ssh <id>`** drops you into a shell (`nvidia-smi` works inside; `exit` to leave)
+- [ ] 💸 (interactive box) `mimiry session create --image nvcr.io/nvidia/pytorch:24.01-py3 --gpu A100 --wait` then **`mimiry session ssh <id>`** drops you into a shell (`nvidia-smi` works inside; `exit` to leave)
 - [ ] `mimiry session terminate <id>` → `Terminated <id>.`
 - [ ] after terminate, `mimiry session status <id>` shows a terminal state
 
@@ -105,7 +105,7 @@ reason — a checklist error, not a defect. Use 100 as the floor everywhere here
 - [x] `mimiry volume list` shows it (table); `--json` gives raw
 - [x] `mimiry volume status <id>` shows detail incl. `size_gb`, `attached_to`
 - [x] `mimiry volume extend <id> --size-gb 200` → size grows; shrinking (e.g. `--size-gb 100`) is rejected by the API
-- [ ] 💸 (optional) attach at launch: `mimiry session create --image …ubuntu24.04 --gpu T4 --provider gcp --volume test-vol:/mnt/data --command "df -h /mnt/data" --wait` → logs show the mount
+- [ ] 💸 (optional) attach at launch: `mimiry session create --image nvcr.io/nvidia/pytorch:24.01-py3 --gpu A100 --volume test-vol:/mnt/data --command "df -h /mnt/data" --wait` → logs show the mount
 - [x] `mimiry volume delete <id>` → `Delete requested…`; then `mimiry volume list --all` shows it `deleted`
 
 ## 6. Scriptability / ergonomics

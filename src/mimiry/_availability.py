@@ -57,8 +57,8 @@ def check_gpu_offered(
             # No provider hint, but a location — which is binding when it came
             # from a mounted volume. Refuse now rather than after the platform
             # reports "no GPU matches criteria" on a session that already exists.
-            offered_at = _by_price(gpu, available, None, location)
-            if offered_at == [gpu]:
+            offered_at = _priced_names(available, None, location)
+            if not offered_at:
                 locs = sorted({
                     loc for m in available for p in m.get("providers", [])
                     for loc in (p.get("locations") or [])
@@ -68,7 +68,7 @@ def check_gpu_offered(
                     f"Available locations: {', '.join(locs) or 'none'}."
                 )
             return offered_at
-        return _by_price(gpu, available, None, None)
+        return _priced_names(available, None, None) or [gpu]
 
     # Collapse available matches into provider → set(locations) so a mismatch
     # can name the providers and locations that do offer the GPU.
@@ -96,15 +96,13 @@ def check_gpu_offered(
             f"Available locations: {locs}."
         )
 
-    return _by_price(gpu, available, provider, location)
+    return _priced_names(available, provider, location) or [gpu]
 
 
-def _by_price(
-    gpu: str, models: list[dict], provider: str | None, location: str | None
-) -> list[str]:
-    """Order the concrete names in ``models`` that satisfy the hints by their
-    cheapest matching hourly rate. Falls back to ``[gpu]`` when nothing in the
-    catalog carries a name, so the API still gets to decide.
+def _priced_names(models: list[dict], provider: str | None, location: str | None) -> list[str]:
+    """The concrete names in ``models`` that satisfy the hints, ordered by
+    their cheapest matching hourly rate. Empty when nothing satisfies them —
+    the caller decides whether that is a refusal or a deferral to the API.
     """
     priced: list[tuple[float, str]] = []
     for m in models:
@@ -119,8 +117,6 @@ def _by_price(
         ]
         if rates:
             priced.append((min(rates), name))
-    if not priced:
-        return [gpu]
     return [name for _, name in sorted(priced)]
 
 

@@ -116,6 +116,8 @@ def test_location_without_provider_filters_and_refuses():
     # A location with no provider hint — the volume-adoption path — must be
     # honoured, not ignored: refused when nothing is offered there.
     assert check_gpu_offered(MODELS, "H100", None, "US-EAST-1") == ["H100_SXM"]
+    # A concrete name resolves to itself; that must not read as "nothing found".
+    assert check_gpu_offered(MODELS, "H100_SXM", None, "FIN-01") == ["H100_SXM"]
     with pytest.raises(SessionError, match="not currently offered in location 'MARS'") as exc:
         check_gpu_offered(MODELS, "H100", None, "MARS")
     assert "FIN-01" in str(exc.value) and "US-EAST-1" in str(exc.value)
