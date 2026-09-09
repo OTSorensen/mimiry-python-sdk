@@ -21,7 +21,7 @@ a silent bug the first time.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from mimiry._client import MimiryClient
@@ -155,6 +155,67 @@ def wait_for_ssh_ready(
         if ssh.get("host") and ssh.get("port"):
             return payload
         time.sleep(min(config.poll_interval_seconds, 3.0))
+
+
+@dataclass
+class RunInfo:
+    """What one session cost and how long each phase took, from the platform's
+    own numbers. Attached to a ``Function`` as ``last_run`` after every
+    ``.remote()`` / ``.map()``, and to ``RunResult.info`` for ``mimiry.run``.
+
+    ``phases`` is seconds from submission to the first sighting of each
+    state, as the SDK observed them (so subject to its poll interval).
+    ``final_cost`` is the platform's settled charge in ``currency`` once the
+    session has terminated; ``None`` while it has not settled. ``duration``
+    is submission to release, wall-clock, as seen by the SDK.
+    """
+
+    session_id: str
+    gpu_type: str | None = None
+    provider: str | None = None
+    hourly_rate: float | None = None
+    currency: str | None = None
+    phases: dict[str, float] = field(default_factory=dict)
+    duration: float | None = None
+    final_cost: float | None = None
+    state: str | None = None
+    stop_reason: str | None = None
+
+
+def build_run_info(
+    client: MimiryClient,
+    session_id: str,
+    *,
+    phases: dict[str, float],
+    started_at: float,
+    settle_wait_seconds: float = 6.0,
+    poll_seconds: float = 1.0,
+) -> RunInfo:
+    """Read the session's billing block after release. The platform settles
+    ``final_cost`` a few seconds after termination, so poll briefly; never
+    raise — a missing figure is ``None``, not a failed call.
+    """
+    info = RunInfo(session_id=session_id, phases=dict(phases), duration=time.monotonic() - started_at)
+    deadline = time.monotonic() + settle_wait_seconds
+    while True:
+        try:
+            payload = client.get_session(session_id)
+        except Exception:
+            return info
+        billing = payload.get("billing") or {}
+        info.gpu_type = payload.get("gpu_type") or info.gpu_type
+        info.provider = billing.get("provider") or info.provider
+        info.hourly_rate = billing.get("hourly_rate") or info.hourly_rate
+        info.currency = billing.get("currency") or info.currency
+        info.state = _extract_state(payload) or info.state
+        info.stop_reason = payload.get("stop_reason") or info.stop_reason
+        cost = billing.get("final_cost")
+        if cost is not None:
+            info.final_cost = float(cost)
+            return info
+        if time.monotonic() >= deadline:
+            return info
+        time.sleep(poll_seconds)
 
 
 def make_terminal_check(

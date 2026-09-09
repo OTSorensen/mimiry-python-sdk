@@ -109,6 +109,21 @@ def infer(prompt: str) -> str: ...
 A volume lives in one location. The session adopts it; a `location=` that
 disagrees is refused before the session exists.
 
+## What did that cost?
+
+Every call leaves the platform's own figures on the function:
+
+```python
+gpu_info.remote()
+run = gpu_info.last_run
+print(run.session_id, run.gpu_type, run.hourly_rate, run.currency)
+print(run.phases)        # {"provisioned": 52.1, "pulling_image": 174.9, "running": 472.3}
+print(run.final_cost)    # 0.222 — settled by the platform after termination
+```
+
+`mimiry.run()` returns the same on `result.info`. A `MapError` carries it as
+`.run`, so a map that died part-way still tells you what it cost.
+
 ## Many calls, one session
 
 `.map()` creates a single session and streams every item through it, so the

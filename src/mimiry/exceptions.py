@@ -55,11 +55,14 @@ class MapError(SessionError):
         results: list,
         failures: list,
         total: int,
+        run=None,
     ) -> None:
         super().__init__(message)
         self.results = results
         self.failures = failures
         self.total = total
+        #: The session's :class:`~mimiry._session.RunInfo`, when one existed.
+        self.run = run
 
     @property
     def completed(self) -> int:

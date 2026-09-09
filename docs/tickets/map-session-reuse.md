@@ -1,4 +1,4 @@
-# One session for `.map()`, and a volume on the decorator
+# One session for `.map()`, a volume on the decorator, and the bill on the result
 
 ## Context
 
@@ -48,6 +48,13 @@ attach a volume with the same location safety the CLI has.
 11. `MapError` and `RemoteFunctionError` are importable from `mimiry`.
 12. Each `_ssh_cmd` retry and the new `push_remote_file` write atomically
     (`.partial` then rename) so the container never reads a half-written call.
+13. After `.remote()` or `.map()`, `Function.last_run` is a `RunInfo` with
+    the session id, `gpu_type`, `hourly_rate`, `currency`, per-state
+    seconds, wall-clock `duration`, and the platform's `final_cost` once it
+    has settled (polled briefly after release; `None` if it has not).
+14. `RunResult.info` from `mimiry.run()` and `MapError.run` carry the same
+    `RunInfo`; a map that died part-way still reports its session's cost.
+15. Reading the billing figures never raises; a missing field is `None`.
 
 ## Non-goals
 

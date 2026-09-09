@@ -15,6 +15,7 @@ from mimiry.exceptions import (
     ResultIntegrityError,
 )
 from mimiry._serialization import RemoteFunctionError
+from mimiry._session import RunInfo
 from mimiry.function import function, Function
 from mimiry.image import Image
 from mimiry.run import run
@@ -38,4 +39,5 @@ __all__ = [
     "ResultParseError",
     "ResultIntegrityError",
     "RemoteFunctionError",
+    "RunInfo",
 ]

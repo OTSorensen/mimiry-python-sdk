@@ -18,7 +18,14 @@ roughly follows [Keep a Changelog](https://keepachangelog.com/) and
   `{name: path}` mapping picks mount points. The session adopts the volume's
   location, and a conflicting `location=` is refused before anything exists —
   the same preflight the CLI's `--volume` already had.
-- `MapError` and `RemoteFunctionError` are exported from `mimiry`.
+- **Every call reports what it cost.** `Function.last_run` (after
+  `.remote()` / `.map()`), `RunResult.info` (from `mimiry.run`) and
+  `MapError.run` carry a `RunInfo`: session id, GPU type, provider, hourly
+  rate, seconds to each state, wall-clock duration, and the platform's
+  settled `final_cost`. The SDK also logs one line per session with the
+  cost at release. Before this, every number had to be reconstructed from
+  `session logs --timestamps` and `transactions` afterwards.
+- `MapError`, `RemoteFunctionError` and `RunInfo` are exported from `mimiry`.
 
 ### Fixed
 - **`@mimiry.function()` and `mimiry.run()` default to a job that can run.**

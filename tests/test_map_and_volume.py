@@ -47,11 +47,17 @@ class _Platform:
         return {"id": f"sess-{len(self.created)}", "state": "submitted"}
 
     def get_session(self, session_id, *, events_tail=None):
+        billing = {"provider": "verda", "hourly_rate": 1.85, "currency": "EUR"}
+        if session_id in self.terminated:
+            billing["final_cost"] = 0.308
+            return {"id": session_id, "state": "terminated", "gpu_type": "A100_80G_SXM", "billing": billing}
         if self.die_after_calls is not None and self.calls_served >= self.die_after_calls:
-            return {"id": session_id, "state": "exited", "error": "container died"}
+            return {"id": session_id, "state": "exited", "error": "container died", "billing": billing}
         return {
             "id": session_id,
             "state": "running",
+            "gpu_type": "A100_80G_SXM",
+            "billing": billing,
             "ssh": {"host": "10.0.0.1", "port": 22, "username": "root"},
         }
 
@@ -141,7 +147,17 @@ def wire(monkeypatch, tmp_path):
         monkeypatch.setattr(function_mod, "new_result_hmac_key", lambda: HMAC)
         monkeypatch.setattr(function_mod, "preflight_gpu_availability", lambda *a, **kw: ["A100_80G_SXM"])
         monkeypatch.setattr(ssh_mod.subprocess, "run", container.run)
-        monkeypatch.setattr(ssh_mod.time, "sleep", lambda s: None)
+        # Fake clocks everywhere a wait could otherwise burn wall time.
+        import mimiry._session as session_mod
+
+        clock = {"t": 0.0}
+
+        def _sleep(seconds):
+            clock["t"] += seconds
+
+        for mod in (ssh_mod, session_mod, function_mod):
+            monkeypatch.setattr(mod.time, "sleep", _sleep)
+            monkeypatch.setattr(mod.time, "monotonic", lambda: clock["t"])
         monkeypatch.setattr(function_mod, "open_control_channel", lambda t: t)
         monkeypatch.setattr(function_mod, "close_control_channel", lambda t: None)
         return platform, container
@@ -155,8 +171,9 @@ def _square(x, power=2):
 
 def test_map_uses_one_session_for_every_item(wire):
     platform, container = wire(_square)
-    out = _run_map(_square, FunctionConfig(), [((2,), {}), ((3,), {"power": 3}), ((4,), {})])
+    out, info = _run_map(_square, FunctionConfig(), [((2,), {}), ((3,), {"power": 3}), ((4,), {})])
     assert out == [4, 27, 16]
+    assert info.session_id == "sess-1" and info.final_cost == 0.308 and info.gpu_type == "A100_80G_SXM"
     assert len(platform.created) == 1, "one session, not one per item"
     assert container.done, "the container was released"
     assert platform.terminated == ["sess-1"] or platform.terminated == []
@@ -169,6 +186,9 @@ def test_public_map_goes_through_the_single_session_path(wire):
     fn = mimiry.function()(_square)
     assert fn.map([2, 3, 4]) == [4, 9, 16]
     assert len(platform.created) == 1, "Function.map must not fall back to one session per item"
+    assert fn.last_run.session_id == "sess-1"
+    assert fn.last_run.final_cost == 0.308
+    assert "running" in fn.last_run.phases
 
 
 def test_map_ships_the_function_once_and_arguments_per_call(wire):
@@ -194,6 +214,7 @@ def test_map_keeps_finished_results_when_an_item_raises(wire):
         _run_map(flaky, FunctionConfig(), [((2,), {}), ((3,), {}), ((4,), {})])
     err = exc.value
     assert err.results == [20, None, 40]
+    assert err.run is not None and err.run.session_id == "sess-1"
     assert [i for i, _ in err.failures] == [1]
     assert "three is bad" in str(err.failures[0][1])
     assert err.completed == 2
@@ -205,8 +226,9 @@ def test_map_keeps_finished_results_when_the_session_dies(wire):
     with pytest.raises(MapError) as exc:
         _run_map(_square, FunctionConfig(), [((2,), {}), ((3,), {}), ((4,), {}), ((5,), {})])
     err = exc.value
-    assert err.results[:2] == [4, 9]
+    assert err.results == [4, 9, None, None]
     assert err.total == 4
+    assert err.run is not None, "a session that died still reports what it cost"
     assert err.failures[-1][0] == 2, "the failure is recorded at the first unfinished index"
     assert "died" in str(err) or "exited" in str(err)
 
@@ -234,10 +256,38 @@ def test_remote_still_uses_the_single_call_protocol(wire):
     import mimiry._ssh as m
 
     m.subprocess.run = run
-    assert _run_remote(_square, FunctionConfig(), (7,), {}) == 49
+    result, info = _run_remote(_square, FunctionConfig(), (7,), {})
+    assert result == 49
+    assert info.session_id == "sess-1" and info.hourly_rate == 1.85
     env = platform.created[0]["environment_vars"]
     fn, args, kwargs = cloudpickle.loads(base64.b64decode(env["MIMIRY_FN_PAYLOAD_B64"]))
     assert args == (7,)
+
+
+def test_public_remote_records_last_run(wire):
+    import hashlib
+    import hmac as _hmac
+
+    import mimiry
+
+    platform, container = wire(_square)
+    inner = container.run
+
+    def run(args, **kw):
+        cmd = args[-1]
+        if cmd.startswith("test -f ") and ssh_mod.RESULT_FILE in cmd and "present" in cmd:
+            wire_ = base64.b64encode(cloudpickle.dumps({"ok": True, "result": 9})).decode()
+            sig = _hmac.new(HMAC.encode(), wire_.encode(), hashlib.sha256).hexdigest()
+            container.fs[ssh_mod.RESULT_FILE] = (sig + "\n" + wire_).encode()
+        return inner(args, **kw)
+
+    ssh_mod.subprocess.run = run
+    fn = mimiry.function()(_square)
+    assert fn.last_run is None
+    assert fn.remote(3) == 9
+    assert fn.last_run.session_id == "sess-1"
+    assert fn.last_run.final_cost == 0.308
+    assert fn.last_run.duration is not None
 
 
 def test_volume_reaches_the_payload_and_sets_the_location(wire):

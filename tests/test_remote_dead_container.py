@@ -100,6 +100,10 @@ def dead_session(monkeypatch, tmp_path):
 
     monkeypatch.setattr(ssh_mod.time, "sleep", _sleep)
     monkeypatch.setattr(ssh_mod.time, "monotonic", lambda: clock["t"])
+    import mimiry._session as session_mod
+
+    monkeypatch.setattr(session_mod.time, "sleep", _sleep)
+    monkeypatch.setattr(session_mod.time, "monotonic", lambda: clock["t"])
     return client
 
 

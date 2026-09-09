@@ -38,6 +38,8 @@ from mimiry._serialization import (
 )
 from mimiry._session import (
     TERMINAL_STATES,
+    RunInfo,
+    build_run_info,
     make_terminal_check,
     preflight_volume_location,
     raise_if_ended_before_result,
@@ -109,6 +111,9 @@ class Function:
         self._cfg = cfg
         self.__name__ = getattr(fn, "__name__", "function")
         self.__doc__ = fn.__doc__
+        #: Session id, GPU, rate, per-phase seconds and settled cost of the
+        #: most recent ``.remote()`` / ``.map()``; ``None`` before the first.
+        self.last_run: RunInfo | None = None
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         return self._fn(*args, **kwargs)
@@ -118,8 +123,10 @@ class Function:
         return self._fn(*args, **kwargs)
 
     def remote(self, *args: Any, **kwargs: Any) -> Any:
-        """Run the function on a Mimiry GPU session. Blocks until done. Returns the value."""
-        return _run_remote(self._fn, self._cfg, args, kwargs)
+        """Run the function on a Mimiry GPU session. Blocks until done. Returns
+        the value. ``self.last_run`` afterwards says what it cost."""
+        result, self.last_run = _run_remote(self._fn, self._cfg, args, kwargs)
+        return result
 
     def map(self, iterable: Iterable[Any], *, kwargs_list: list[dict] | None = None) -> list:
         """Apply the function to every item on one GPU session and return the
@@ -139,7 +146,12 @@ class Function:
         if not items:
             return []
         calls = [((item,), kw) for item, kw in zip(items, kwargs_list, strict=True)]
-        return _run_map(self._fn, self._cfg, calls)
+        try:
+            results, self.last_run = _run_map(self._fn, self._cfg, calls)
+        except MapError as e:
+            self.last_run = e.run
+            raise
+        return results
 
 
 def function(
@@ -247,6 +259,8 @@ class _Attached:
     terminal_check: Callable[[], str | None]
     hmac_key: str
     timeout: int
+    started_at: float = 0.0
+    phases: dict[str, float] = field(default_factory=dict)
 
 
 def _log(msg: str) -> None:
@@ -307,11 +321,12 @@ def _attach(client: MimiryClient, cfg: FunctionConfig, payload: dict, hmac_key: 
     # availability endpoint won't block submission. See _availability.py.
     payload["gpu"]["types"] = preflight_gpu_availability(client, cfg.gpu, cfg.provider, location)
 
+    started_at = time.monotonic()
     session = client.create_session(payload)
     session_id = session["id"]
     _log(f"session {session_id} submitted")
 
-    ran_payload, _ = wait_for_started_or_terminal(
+    ran_payload, phases = wait_for_started_or_terminal(
         client, session_id, run_config, on_state_change=lambda st: _log(f"state={st}")
     )
     # If the container ended before we could attach, surface its logs now
@@ -336,12 +351,13 @@ def _attach(client: MimiryClient, cfg: FunctionConfig, payload: dict, hmac_key: 
 
     _log("opening SSH control channel (multiplexing for the bootstrap install storm)")
     target = open_control_channel(target)
-    return _Attached(session_id, target, terminal_check, hmac_key, timeout)
+    return _Attached(session_id, target, terminal_check, hmac_key, timeout, started_at, phases)
 
 
-def _release(client: MimiryClient, att: _Attached | None, session_id: str | None) -> None:
+def _release(client: MimiryClient, att: _Attached | None, session_id: str | None) -> RunInfo | None:
     """Best-effort teardown: tell the container we are done, close the
-    channel, terminate anything still alive. Never raises."""
+    channel, terminate anything still alive, then read what it cost. Never
+    raises; returns ``None`` only when no session was ever created."""
     if att is not None:
         try:
             signal_done(att.target)
@@ -349,13 +365,19 @@ def _release(client: MimiryClient, att: _Attached | None, session_id: str | None
             _log(f"warning: signal_done failed ({e}); container will time out on its own")
         close_control_channel(att.target)
     if session_id is None:
-        return
+        return None
     try:
         state = (client.get_session(session_id).get("state") or "").lower()
         if state not in TERMINAL_STATES:
             client.terminate_session(session_id)
     except Exception:
         pass
+    return build_run_info(
+        client,
+        session_id,
+        phases=att.phases if att is not None else {},
+        started_at=att.started_at if att is not None else time.monotonic(),
+    )
 
 
 def _decode(raw: str, hmac_key: str, session_id: str) -> Any:
@@ -369,8 +391,9 @@ def _decode(raw: str, hmac_key: str, session_id: str) -> Any:
         raise ResultParseError(f"{e} (session {session_id})") from e
 
 
-def _run_remote(fn: Callable, cfg: FunctionConfig, args: tuple, kwargs: dict) -> Any:
-    """Internal: do one end-to-end remote call on a fresh session."""
+def _run_remote(fn: Callable, cfg: FunctionConfig, args: tuple, kwargs: dict) -> tuple[Any, RunInfo | None]:
+    """Internal: do one end-to-end remote call on a fresh session. Returns
+    ``(result, run_info)``."""
     payload, hmac_key, timeout, config = _prepare(fn, cfg, worker=False)
     payload["environment_vars"][payload_env_var()] = pack_call(fn, args, kwargs)
     token = get_token(config.ssh_key_path, config.api_base)
@@ -387,16 +410,19 @@ def _run_remote(fn: Callable, cfg: FunctionConfig, args: tuple, kwargs: dict) ->
             )
             _log("fetching result")
             raw = fetch_remote_file(att.target, RESULT_FILE).decode("utf-8", errors="replace")
-            return _decode(raw, hmac_key, session_id)
+            result = _decode(raw, hmac_key, session_id)
         except Exception:
             _narrate_failure(client, session_id)
             raise
         finally:
-            _release(client, att, session_id)
+            info = _release(client, att, session_id)
+            _log_cost(info)
+        return result, info
 
 
-def _run_map(fn: Callable, cfg: FunctionConfig, calls: list[tuple[tuple, dict]]) -> list:
-    """Internal: one session, every call streamed through it in order."""
+def _run_map(fn: Callable, cfg: FunctionConfig, calls: list[tuple[tuple, dict]]) -> tuple[list, RunInfo | None]:
+    """Internal: one session, every call streamed through it in order.
+    Returns ``(results, run_info)``; a :class:`MapError` carries the info."""
     payload, hmac_key, timeout, config = _prepare(fn, cfg, worker=True)
     token = get_token(config.ssh_key_path, config.api_base)
 
@@ -431,16 +457,23 @@ def _run_map(fn: Callable, cfg: FunctionConfig, calls: list[tuple[tuple, dict]])
             # The session itself is gone (capacity, container death, SSH). Do
             # not discard what already came back.
             _narrate_failure(client, session_id)
+            info = _release(client, att, session_id)
+            att = None
+            session_id = None
+            _log_cost(info)
             if results:
                 raise MapError(
                     f"map stopped after {len(results)} of {len(calls)} items: {e}",
-                    results=results,
+                    results=results + [None] * (len(calls) - len(results)),
                     failures=failures + [(len(results), e)],
                     total=len(calls),
+                    run=info,
                 ) from e
             raise
         finally:
-            _release(client, att, session_id)
+            if session_id is not None:
+                info = _release(client, att, session_id)
+                _log_cost(info)
 
     if failures:
         raise MapError(
@@ -448,8 +481,17 @@ def _run_map(fn: Callable, cfg: FunctionConfig, calls: list[tuple[tuple, dict]])
             results=results,
             failures=failures,
             total=len(calls),
+            run=info,
         )
-    return results
+    return results, info
+
+
+def _log_cost(info: RunInfo | None) -> None:
+    if info is None:
+        return
+    cost = f"{info.final_cost:.4f} {info.currency or ''}".strip() if info.final_cost is not None else "not settled yet"
+    dur = f"{info.duration:.0f}s" if info.duration is not None else "?"
+    _log(f"session {info.session_id}: {info.gpu_type or '?'} for {dur}, cost {cost}")
 
 
 def _narrate_failure(client: MimiryClient, session_id: str | None) -> None:
@@ -465,4 +507,4 @@ def _narrate_failure(client: MimiryClient, session_id: str | None) -> None:
         pass
 
 
-__all__ = ["Function", "FunctionConfig", "MapError", "SessionError", "function"]
+__all__ = ["Function", "FunctionConfig", "MapError", "RunInfo", "SessionError", "function"]

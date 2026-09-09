@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -22,6 +23,8 @@ from mimiry._client import MimiryClient
 from mimiry._config import Config, get_config
 from mimiry._session import (
     TERMINAL_STATES,
+    RunInfo,
+    build_run_info,
     make_terminal_check,
     raise_if_ended_before_result,
     raise_if_failed,
@@ -56,6 +59,8 @@ class RunResult:
     stop_reason: str | None
     logs: str  # combined stdout + stderr from the user command
     exit_code: int | None
+    #: GPU, rate, per-phase seconds and settled cost; see :class:`RunInfo`.
+    info: RunInfo | None = None
 
 
 def _session_name() -> str:
@@ -162,12 +167,13 @@ def run(
         resolved_gpu = preflight_gpu_availability(client, gpu, provider, location)
         payload["gpu"]["types"] = resolved_gpu
 
+        started_at = time.monotonic()
         session = client.create_session(payload)
         session_id = session["id"]
         _log(f"session {session_id} submitted")
 
         try:
-            ran_payload, _ = wait_for_started_or_terminal(
+            ran_payload, phases = wait_for_started_or_terminal(
                 client, session_id, run_config, on_state_change=lambda s: _log(f"state={s}")
             )
             # Surface a premature container exit (bad image / failed install) with
@@ -217,7 +223,7 @@ def run(
                 close_control_channel(target)
 
             final_payload = client.get_session(session_id)
-            return RunResult(
+            result = RunResult(
                 session_id=session_id,
                 state=final_payload.get("state", "?"),
                 stop_reason=final_payload.get("stop_reason"),
@@ -231,3 +237,5 @@ def run(
                     client.terminate_session(session_id)
                 except Exception:
                     pass
+        result.info = build_run_info(client, session_id, phases=phases, started_at=started_at)
+        return result
