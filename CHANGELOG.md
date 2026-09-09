@@ -4,7 +4,10 @@ All notable changes to the `mimiry` SDK are documented here. This project
 roughly follows [Keep a Changelog](https://keepachangelog.com/) and
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.4.0] — 2026-09-09
+
+Every change below was verified against the live alpha platform on the
+release date; the evidence is in `mimiry-alpha/bug-reports/*_2026-09-09.md`.
 
 ### Added
 - **`.map()` runs every item on one session.** The function ships once; each
