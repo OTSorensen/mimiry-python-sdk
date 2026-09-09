@@ -62,15 +62,23 @@ def _session_name(prefix: str) -> str:
     return f"{prefix}-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{int(time.time() * 1000) % 1000:03d}"
 
 
+# Defaults every provider on the platform can satisfy today. "A100" is a
+# family alias resolved to a concrete catalog name by the availability
+# preflight; a bare ``@mimiry.function()`` must be able to succeed.
+DEFAULT_GPU = "A100"
+DEFAULT_IMAGE = "nvcr.io/nvidia/pytorch:24.01-py3"
+
+
 @dataclass
 class FunctionConfig:
-    gpu: str = "T4"
+    gpu: str = DEFAULT_GPU
     gpu_count: int = 1
-    # Ubuntu 24.04 ships Python 3.12 by default — matches recent local SDK runtimes.
-    # cloudpickle code objects don't roundtrip across major.minor mismatches, so
-    # the container's Python must match the caller's. See README "Python version
-    # compatibility".
-    image: Image | str = "nvcr.io/nvidia/cuda:12.6.2-runtime-ubuntu24.04"
+    # The default image must pull without credentials on the platform; NGC's
+    # ``nvidia/cuda`` images do not, ``nvidia/pytorch`` does. It ships Python
+    # 3.10, and cloudpickle payloads only load on the same Python minor as the
+    # caller, so a caller on another version must pick an image that matches.
+    # See README "Python version".
+    image: Image | str = DEFAULT_IMAGE
     timeout_seconds: int | None = None  # falls back to config.timeout_seconds
     provider: str | None = None
     location: str | None = None
@@ -113,13 +121,14 @@ class Function:
 
 def function(
     *,
-    gpu: str = "T4",
+    gpu: str = DEFAULT_GPU,
     gpu_count: int = 1,
-    # Ubuntu 24.04 ships Python 3.12 by default — matches recent local SDK runtimes.
-    # cloudpickle code objects don't roundtrip across major.minor mismatches, so
-    # the container's Python must match the caller's. See README "Python version
-    # compatibility".
-    image: Image | str = "nvcr.io/nvidia/cuda:12.6.2-runtime-ubuntu24.04",
+    # The default image must pull without credentials on the platform; NGC's
+    # ``nvidia/cuda`` images do not, ``nvidia/pytorch`` does. It ships Python
+    # 3.10, and cloudpickle payloads only load on the same Python minor as the
+    # caller, so a caller on another version must pick an image that matches.
+    # See README "Python version".
+    image: Image | str = DEFAULT_IMAGE,
     timeout: int | None = None,
     provider: str | None = None,
     location: str | None = None,
@@ -130,7 +139,7 @@ def function(
 
     Example::
 
-        @mimiry.function(gpu="T4", provider="gcp", image="nvcr.io/nvidia/pytorch:24.01-py3")
+        @mimiry.function(gpu="A100", provider="verda", image="nvcr.io/nvidia/pytorch:24.01-py3")
         def train(dataset: str) -> dict:
             import torch
             return {"loss": 0.1}
@@ -233,7 +242,7 @@ def _run_remote(fn: Callable, cfg: FunctionConfig, args: tuple, kwargs: dict) ->
 
     with MimiryClient(token) as client:
         # Fail fast on an impossible gpu/provider combo before paying for a
-        # provisioning round-trip, and resolve a GPU family alias (e.g. "T4") to
+        # provisioning round-trip, and resolve a GPU family alias (e.g. "A100") to
         # the concrete catalog name the API requires. Best-effort — a flaky
         # availability endpoint won't block submission. See _availability.py.
         resolved_gpu = preflight_gpu_availability(client, cfg.gpu, cfg.provider, cfg.location)

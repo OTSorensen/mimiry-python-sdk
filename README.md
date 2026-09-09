@@ -49,7 +49,7 @@ The sections below cover the common ones; everything is discoverable via `--help
 
 ## GPU types and providers
 
-Mimiry sources GPUs from both local datacenters and cloud providers across Europe and the US, spanning entry-level cards up to the latest high-end accelerators. You control locality and hardware requirements, as well as which providers to use.
+Mimiry sources GPUs from datacenters and cloud providers across Europe, spanning entry-level cards up to the latest high-end accelerators. You control locality and hardware requirements, as well as which providers to use.
 
 Always check what's currently available before selecting hardware:
 
@@ -57,7 +57,7 @@ Always check what's currently available before selecting hardware:
 mimiry availability
 ```
 
-Filter with `--gpu-family T4`, `--provider gcp`, `--location europe-west4-a`,
+Filter with `--gpu-family A100`, `--provider verda`, `--location FIN-02`,
 `--min-vram 16`, and/or `--available-only`.
 
 ## Managing sessions
@@ -66,8 +66,8 @@ Run and manage GPU sessions entirely from the CLI:
 
 ```bash
 # Launch a job (omit --command for an interactive box; --wait blocks until it starts)
-mimiry session create --image nvcr.io/nvidia/cuda:12.6.2-runtime-ubuntu24.04 \
-    --gpu T4 --provider gcp --command "nvidia-smi" --wait
+mimiry session create --image nvcr.io/nvidia/pytorch:24.01-py3 \
+    --gpu A100 --provider verda --command "nvidia-smi" --wait
 
 mimiry sessions                 # list recent sessions, newest first
 mimiry sessions --active        # only running / provisioning (i.e. still billing)
@@ -134,8 +134,8 @@ inside the image.
 import mimiry
 
 @mimiry.function(
-    # Uses default hardware; run `mimiry availability` to choose a GPU/provider.
-    image="nvcr.io/nvidia/cuda:12.6.2-runtime-ubuntu24.04",
+    # Defaults to an A100; run `mimiry availability` to choose a GPU/provider.
+    image="nvcr.io/nvidia/pytorch:24.01-py3",
 )
 def gpu_info():
     import subprocess
@@ -153,7 +153,7 @@ print(gpu_info.remote())
 import mimiry
 
 result = mimiry.run(
-    image="nvcr.io/nvidia/cuda:12.6.2-runtime-ubuntu24.04",
+    image="nvcr.io/nvidia/pytorch:24.01-py3",
     command="nvidia-smi",
 )
 print(result.logs)

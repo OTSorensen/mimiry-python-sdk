@@ -40,6 +40,7 @@ from mimiry._ssh import (
     wait_for_remote_file,
     wait_for_sshd,
 )
+from mimiry.function import DEFAULT_GPU
 from mimiry.image import Image, normalize_image
 
 # Paths the container writes; mimics the function flow but with plaintext output rather
@@ -88,7 +89,7 @@ def _wrap_command(user_command: str, install_prefix: str) -> str:
 def run(
     image: Image | str,
     *,
-    gpu: str = "T4",
+    gpu: str = DEFAULT_GPU,
     gpu_count: int = 1,
     command: str,
     timeout: int | None = None,
@@ -101,9 +102,9 @@ def run(
     Example::
 
         result = mimiry.run(
-            image="nvcr.io/nvidia/cuda:12.6.0-runtime-ubuntu22.04",
-            gpu="T4",
-            provider="gcp",
+            image="nvcr.io/nvidia/pytorch:24.01-py3",
+            gpu="A100",
+            provider="verda",
             command="nvidia-smi",
         )
         print(result.logs)

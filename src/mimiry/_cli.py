@@ -269,7 +269,7 @@ def cmd_session_create(args: argparse.Namespace) -> int:
         ) or args.location
         if location:
             payload["gpu"]["location"] = location
-        # Resolve a GPU family alias (e.g. "T4") to the concrete catalog name
+        # Resolve a GPU family alias (e.g. "A100") to the concrete catalog name
         # the API requires, and fail fast on an impossible combo. Best-effort.
         resolved_gpu = preflight_gpu_availability(c, args.gpu, args.provider, location)
         payload["gpu"]["types"] = [resolved_gpu]
@@ -557,7 +557,7 @@ def main(argv: list[str] | None = None) -> int:
     subs.add_parser("whoami", help="Verify auth and show balance.").set_defaults(func=cmd_whoami)
 
     avail = subs.add_parser("availability", help="Show GPU availability (no auth).")
-    avail.add_argument("--gpu-family", help="Filter, e.g. T4 or H100.")
+    avail.add_argument("--gpu-family", help="Filter, e.g. A100 or H100.")
     avail.add_argument("--provider", help="Filter by provider, e.g. verda.")
     avail.add_argument("--location", help="Filter by location, e.g. FIN-02.")
     avail.add_argument("--min-vram", type=int, metavar="GB", help="Minimum VRAM in GB.")

@@ -13,8 +13,8 @@ import mimiry
 if __name__ == "__main__":
     print("Submitting bash command to Mimiry — expect ~2 min cold start...")
     result = mimiry.run(
-        # Uses default hardware; run `mimiry availability` to choose a GPU/provider.
-        image="nvcr.io/nvidia/cuda:12.6.2-runtime-ubuntu24.04",
+        # Defaults to an A100; run `mimiry availability` to choose a GPU/provider.
+        image="nvcr.io/nvidia/pytorch:24.01-py3",
         command="nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv",
         timeout=900,
     )

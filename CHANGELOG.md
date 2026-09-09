@@ -7,6 +7,13 @@ roughly follows [Keep a Changelog](https://keepachangelog.com/) and
 ## [Unreleased]
 
 ### Fixed
+- **`@mimiry.function()` and `mimiry.run()` default to a job that can run.**
+  The old defaults were a `T4`, which no provider carries, and an
+  `nvcr.io/nvidia/cuda` image the platform cannot pull without registry
+  credentials, so a bare decorator always failed after a paid session. The
+  defaults are now the `A100` family and `nvcr.io/nvidia/pytorch:24.01-py3`
+  (Python 3.10); docstrings, README and `examples/` no longer suggest
+  `provider="gcp"`, which does not exist.
 - **A Python-version mismatch no longer costs a session.** Your function is
   shipped to the container as a cloudpickle blob, which does not load on a
   different Python minor version — the container crashed on arrival, the SDK
