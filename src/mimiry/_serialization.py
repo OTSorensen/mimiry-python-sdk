@@ -35,6 +35,7 @@ import base64
 import hashlib
 import hmac
 import secrets
+import sys
 import textwrap
 import warnings
 
@@ -45,6 +46,7 @@ from mimiry.exceptions import ResultIntegrityError, ResultParseError
 
 _PAYLOAD_ENV = "MIMIRY_FN_PAYLOAD_B64"
 _RESULT_HMAC_ENV = "MIMIRY_RESULT_HMAC_KEY"
+_CALLER_PYTHON_ENV = "MIMIRY_CALLER_PYTHON"
 
 # Soft size limit before we warn. Mimiry's command/env limits aren't publicly documented;
 # 256 KB has been safe in practice.
@@ -87,6 +89,13 @@ def build_bootstrap_script(image_install_prefix: str = "") -> str:
         import base64, hashlib, hmac, os, subprocess, sys, time, traceback
 
         def _write_error(msg: str) -> None:
+            # stderr as well as the file: once the container exits, the file is
+            # unreachable over SSH and the container log is the only channel
+            # left for the SDK to explain what happened.
+            try:
+                print("mimiry bootstrap error: " + msg, file=sys.stderr, flush=True)
+            except Exception:
+                pass
             try:
                 with open("{ERROR_FILE}", "w") as f:
                     f.write(msg)
@@ -117,6 +126,25 @@ def build_bootstrap_script(image_install_prefix: str = "") -> str:
         if not _b64:
             _write_error("{_PAYLOAD_ENV} not set")
             sys.exit(2)
+
+        # A cloudpickle blob built on a different Python minor version does not
+        # load here — at best it raises, at worst the interpreter segfaults and
+        # the caller is left with an SSH error that blames the network. Compare
+        # first and report the mismatch in words.
+        _caller_py = os.environ.get("{_CALLER_PYTHON_ENV}", "")
+        _container_py = "%d.%d" % (sys.version_info[0], sys.version_info[1])
+        if _caller_py and _caller_py != _container_py:
+            _write_error(
+                "python version mismatch: the calling machine runs Python "
+                + _caller_py
+                + " but this image runs Python "
+                + _container_py
+                + ". The function is shipped as a cloudpickle blob, which does not "
+                "load across minor versions. Run your script on Python "
+                + _container_py
+                + ", or choose an image whose Python matches the caller."
+            )
+            sys.exit(5)
 
         try:
             fn, args, kwargs = cloudpickle.loads(base64.b64decode(_b64))
@@ -284,6 +312,18 @@ def payload_env_var() -> str:
 def result_hmac_env_var() -> str:
     """The env-var name the container reads the per-call HMAC key from."""
     return _RESULT_HMAC_ENV
+
+
+def caller_python_env_var() -> str:
+    """The env-var name the container reads the caller's Python version from."""
+    return _CALLER_PYTHON_ENV
+
+
+def caller_python_version() -> str:
+    """This interpreter's ``major.minor`` — the granularity at which a
+    cloudpickle payload is or is not loadable by the container.
+    """
+    return f"{sys.version_info[0]}.{sys.version_info[1]}"
 
 
 def new_result_hmac_key() -> str:

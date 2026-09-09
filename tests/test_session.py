@@ -59,3 +59,23 @@ def test_raises_gracefully_when_logs_unavailable():
             {"id": "s2", "state": "stopped", "stop_reason": "timed_out"}, client=client
         )
     assert exc.value.state == "stopped"  # still raises, just without a log tail
+
+
+def test_platform_error_is_the_diagnosis_when_present():
+    # A provisioning failure never reached a container; the platform's own
+    # error must lead, not a guess that the user's command failed at startup.
+    payload = {
+        "id": "s",
+        "state": "terminated",
+        "error": 'no more matching candidates after 2/3 attempts: verda: insufficient capacity',
+    }
+    with pytest.raises(SessionFailed) as exc:
+        raise_if_ended_before_result(payload)
+    msg = str(exc.value)
+    assert "insufficient capacity" in msg
+    assert "likely failed during startup" not in msg
+
+
+def test_startup_guess_only_when_the_platform_gives_no_error():
+    with pytest.raises(SessionFailed, match="likely failed during startup"):
+        raise_if_ended_before_result({"id": "s", "state": "terminated", "error": ""})

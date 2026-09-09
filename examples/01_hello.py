@@ -9,8 +9,8 @@ import mimiry
 
 
 @mimiry.function(
-    # Uses default hardware; run `mimiry availability` to choose a GPU/provider.
-    image="nvcr.io/nvidia/cuda:12.6.2-runtime-ubuntu24.04",  # Python 3.12 for cloudpickle compat
+    # Defaults to an A100; run `mimiry availability` to choose a GPU/provider.
+    image="nvcr.io/nvidia/pytorch:24.01-py3",  # Python 3.10; your local Python minor must match
 )
 def gpu_name() -> str:
     import subprocess

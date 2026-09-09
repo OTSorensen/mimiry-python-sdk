@@ -21,6 +21,8 @@ from mimiry._client import MimiryClient
 from mimiry._config import get_config
 from mimiry._serialization import (
     build_bootstrap_script,
+    caller_python_env_var,
+    caller_python_version,
     new_result_hmac_key,
     pack_call,
     parse_result,
@@ -29,6 +31,8 @@ from mimiry._serialization import (
     verify_result_envelope,
 )
 from mimiry._session import (
+    TERMINAL_STATES,
+    make_terminal_check,
     raise_if_ended_before_result,
     raise_if_failed,
     wait_for_ssh_ready,
@@ -36,6 +40,7 @@ from mimiry._session import (
 )
 from mimiry._ssh import (
     RESULT_FILE,
+    SSHError,
     close_control_channel,
     fetch_remote_file,
     open_control_channel,
@@ -45,7 +50,7 @@ from mimiry._ssh import (
     wait_for_sshd,
 )
 from mimiry.exceptions import ResultIntegrityError, ResultParseError, SessionError
-from mimiry.image import Image, normalize_image
+from mimiry.image import Image, normalize_image, preflight_python_version
 
 
 def _public_key(ssh_key_path: Path) -> str:
@@ -57,15 +62,23 @@ def _session_name(prefix: str) -> str:
     return f"{prefix}-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{int(time.time() * 1000) % 1000:03d}"
 
 
+# Defaults every provider on the platform can satisfy today. "A100" is a
+# family alias resolved to a concrete catalog name by the availability
+# preflight; a bare ``@mimiry.function()`` must be able to succeed.
+DEFAULT_GPU = "A100"
+DEFAULT_IMAGE = "nvcr.io/nvidia/pytorch:24.01-py3"
+
+
 @dataclass
 class FunctionConfig:
-    gpu: str = "T4"
+    gpu: str = DEFAULT_GPU
     gpu_count: int = 1
-    # Ubuntu 24.04 ships Python 3.12 by default — matches recent local SDK runtimes.
-    # cloudpickle code objects don't roundtrip across major.minor mismatches, so
-    # the container's Python must match the caller's. See README "Python version
-    # compatibility".
-    image: Image | str = "nvcr.io/nvidia/cuda:12.6.2-runtime-ubuntu24.04"
+    # The default image must pull without credentials on the platform; NGC's
+    # ``nvidia/cuda`` images do not, ``nvidia/pytorch`` does. It ships Python
+    # 3.10, and cloudpickle payloads only load on the same Python minor as the
+    # caller, so a caller on another version must pick an image that matches.
+    # See README "Python version".
+    image: Image | str = DEFAULT_IMAGE
     timeout_seconds: int | None = None  # falls back to config.timeout_seconds
     provider: str | None = None
     location: str | None = None
@@ -108,13 +121,14 @@ class Function:
 
 def function(
     *,
-    gpu: str = "T4",
+    gpu: str = DEFAULT_GPU,
     gpu_count: int = 1,
-    # Ubuntu 24.04 ships Python 3.12 by default — matches recent local SDK runtimes.
-    # cloudpickle code objects don't roundtrip across major.minor mismatches, so
-    # the container's Python must match the caller's. See README "Python version
-    # compatibility".
-    image: Image | str = "nvcr.io/nvidia/cuda:12.6.2-runtime-ubuntu24.04",
+    # The default image must pull without credentials on the platform; NGC's
+    # ``nvidia/cuda`` images do not, ``nvidia/pytorch`` does. It ships Python
+    # 3.10, and cloudpickle payloads only load on the same Python minor as the
+    # caller, so a caller on another version must pick an image that matches.
+    # See README "Python version".
+    image: Image | str = DEFAULT_IMAGE,
     timeout: int | None = None,
     provider: str | None = None,
     location: str | None = None,
@@ -125,7 +139,7 @@ def function(
 
     Example::
 
-        @mimiry.function(gpu="T4", provider="gcp", image="nvcr.io/nvidia/pytorch:24.01-py3")
+        @mimiry.function(gpu="A100", provider="verda", image="nvcr.io/nvidia/pytorch:24.01-py3")
         def train(dataset: str) -> dict:
             import torch
             return {"loss": 0.1}
@@ -194,10 +208,21 @@ def _run_remote(fn: Callable, cfg: FunctionConfig, args: tuple, kwargs: dict) ->
 
     token = get_token(config.ssh_key_path, config.api_base)
     image = normalize_image(cfg.image)
+    # Before anything is created or charged: a caller Python that the image's
+    # declared Python can't load is a guaranteed crash on arrival.
+    caller_py = caller_python_version()
+    preflight_python_version(image, caller_py)
     payload_b64 = pack_call(fn, args, kwargs)
     hmac_key = new_result_hmac_key()
     command = build_bootstrap_script(image_install_prefix=image.install_prefix())
-    env_vars = {payload_env_var(): payload_b64, result_hmac_env_var(): hmac_key}
+    env_vars = {
+        payload_env_var(): payload_b64,
+        result_hmac_env_var(): hmac_key,
+        # The container re-checks this against its own interpreter, so an
+        # undeclared image still fails with an explanation rather than a
+        # segfault the SDK would misreport as an SSH problem.
+        caller_python_env_var(): caller_py,
+    }
 
     session_payload = _build_session_payload(cfg, command, env_vars)
 
@@ -217,11 +242,11 @@ def _run_remote(fn: Callable, cfg: FunctionConfig, args: tuple, kwargs: dict) ->
 
     with MimiryClient(token) as client:
         # Fail fast on an impossible gpu/provider combo before paying for a
-        # provisioning round-trip, and resolve a GPU family alias (e.g. "T4") to
+        # provisioning round-trip, and resolve a GPU family alias (e.g. "A100") to
         # the concrete catalog name the API requires. Best-effort — a flaky
         # availability endpoint won't block submission. See _availability.py.
         resolved_gpu = preflight_gpu_availability(client, cfg.gpu, cfg.provider, cfg.location)
-        session_payload["gpu"]["types"] = [resolved_gpu]
+        session_payload["gpu"]["types"] = resolved_gpu
 
         session = client.create_session(session_payload)
         session_id = session["id"]
@@ -241,19 +266,18 @@ def _run_remote(fn: Callable, cfg: FunctionConfig, args: tuple, kwargs: dict) ->
 
             target = ssh_target_from_session(ssh_ready, config.ssh_key_path)
             _log(f"sshing into {target.host}:{target.port}")
-            wait_for_sshd(target)
+            terminal_check = make_terminal_check(client, session_id)
+            try:
+                wait_for_sshd(target, terminal_check=terminal_check)
+            except SSHError:
+                # If the box is gone because the container died, the container's
+                # own logs say why — a transport error would send the user
+                # debugging their network instead.
+                raise_if_ended_before_result(client.get_session(session_id), client=client)
+                raise
 
             _log("opening SSH control channel (multiplexing for the bootstrap install storm)")
             target = open_control_channel(target)
-
-            _terminal_states = {"terminated", "completed", "failed", "stopped", "provision_failed"}
-
-            def _terminal_check() -> str | None:
-                try:
-                    s = (client.get_session(session_id).get("state") or "").lower()
-                except Exception:
-                    return None
-                return s if s in _terminal_states else None
 
             try:
                 _log(f"waiting for {RESULT_FILE}")
@@ -261,7 +285,7 @@ def _run_remote(fn: Callable, cfg: FunctionConfig, args: tuple, kwargs: dict) ->
                     target,
                     RESULT_FILE,
                     max_wait_seconds=timeout,
-                    terminal_check=_terminal_check,
+                    terminal_check=terminal_check,
                 )
 
                 _log("fetching result")
@@ -294,7 +318,7 @@ def _run_remote(fn: Callable, cfg: FunctionConfig, args: tuple, kwargs: dict) ->
             raise
         finally:
             state = (client.get_session(session_id).get("state") or "").lower()
-            if state not in {"terminated", "completed", "failed", "stopped", "provision_failed"}:
+            if state not in TERMINAL_STATES:
                 try:
                     client.terminate_session(session_id)
                 except Exception:

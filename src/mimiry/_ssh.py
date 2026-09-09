@@ -214,10 +214,21 @@ def close_control_channel(target: SshTarget) -> None:
         pass
 
 
-def wait_for_sshd(target: SshTarget, *, max_wait_seconds: int = 300) -> None:
+def wait_for_sshd(
+    target: SshTarget,
+    *,
+    max_wait_seconds: int = 300,
+    terminal_check: Callable[[], str | None] | None = None,
+) -> None:
     """Block until the container's sshd accepts a connection. Mimiry's ssh-proxy
-    seems to accept connections almost immediately after ``state=started``, but
-    we still need a quick probe to avoid racing the very first connect.
+    seems to accept connections almost immediately after the session is ready,
+    but we still need a quick probe to avoid racing the very first connect.
+
+    ``terminal_check``, if provided, is consulted between connect attempts. A
+    container that died on startup takes its host with it, and every remaining
+    connect attempt then times out; without this the caller waits the full
+    ``max_wait_seconds`` and is finally told SSH is unreachable, which sends
+    them debugging their network instead of their container.
     """
     deadline = time.monotonic() + max_wait_seconds
     last_err: str | None = None
@@ -233,6 +244,15 @@ def wait_for_sshd(target: SshTarget, *, max_wait_seconds: int = 300) -> None:
             last_err = (r.stderr or r.stdout).decode("utf-8", errors="replace").strip()
         except subprocess.TimeoutExpired:
             last_err = "ssh connect timed out"
+        if terminal_check is not None:
+            terminal_state = terminal_check()
+            if terminal_state is not None:
+                raise SSHError(
+                    f"session reached terminal state '{terminal_state}' before sshd on "
+                    f"{target.host}:{target.port} became reachable — the container exited "
+                    "before we could attach, so this is a container failure, not a network "
+                    "one. Check the session logs for why the command exited."
+                )
         time.sleep(3)
     raise SSHError(
         f"sshd not reachable on {target.host}:{target.port} after {max_wait_seconds}s — last: {last_err}"

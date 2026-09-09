@@ -1,21 +1,40 @@
-# 0.3.0 Manual Test Sheet
+# Manual Test Sheet
 
-A hands-on checklist to validate the expanded CLI before release. Work top to
+A hands-on checklist to validate the CLI against the live API. Work top to
 bottom. **💸 = spends credit (launches a real GPU session)**; everything else is
 a free read. A teardown section at the end removes anything that could linger.
+
+The version is deliberately not written into this sheet. It was pinned to
+`0.3.0` while the package moved to `0.3.3`, which made the first check fail for
+a reason that had nothing to do with the SDK — read the expected version from
+the package rather than from prose.
 
 ## Setup
 
 ```bash
-cd ~/projects/mimiry-test
-source .venv/bin/activate
-# Install the candidate build (either the local wheel or the editable branch):
-pip install -U /home/olive/projects/ml-engineer/mimiry-sdk-python/dist/mimiry-0.3.0-py3-none-any.whl
-#   …or, to track the branch:  pip install -e /home/olive/projects/ml-engineer/mimiry-sdk-python
-mimiry --version          # expect: mimiry 0.3.0
+# The integration test bed. This repo holds unit tests only; testing against
+# the live API happens from mimiry-alpha via an editable install, so edits to
+# the SDK take effect with no reinstall step.
+cd ~/projects/mimiry-alpha
+python3 -m venv .venv-sdk-dev            # first time only
+source .venv-sdk-dev/bin/activate
+pip install -e ~/projects/mimiry-python-sdk
+
+# Sanity: the CLI version must match the package it was installed from.
+mimiry --version
+python3 -c "import mimiry; print(mimiry.__version__)"
 ```
 
-- [ ] `mimiry --version` prints `mimiry 0.3.0`
+- [x] `mimiry --version` matches `mimiry.__version__` and `pyproject.toml`
+- [x] `mimiry config` shows `api_base: https://alpha.mimiry.com`
+
+**Before starting a paid section, confirm nothing is already running:**
+
+```bash
+mimiry balance          # note the starting figure
+mimiry sessions --active
+mimiry volume list
+```
 
 ---
 
@@ -35,8 +54,8 @@ mimiry --version          # expect: mimiry 0.3.0
 | Step | Command | Expect |
 |---|---|---|
 | - [ ] | `mimiry availability` | all GPU models |
-| - [ ] | `mimiry availability --gpu-family T4` | only T4 |
-| - [ ] | `mimiry availability --provider gcp --available-only` | only available gcp GPUs |
+| - [ ] | `mimiry availability --gpu-family A100` | only A100 |
+| - [ ] | `mimiry availability --provider verda --available-only` | only available verda GPUs |
 | - [ ] | `mimiry availability --min-vram 40` | only ≥40 GB cards |
 | - [ ] | `mimiry availability --location europe-west4-a` | only that location |
 
@@ -53,20 +72,20 @@ mimiry --version          # expect: mimiry 0.3.0
 
 ## 4. Sessions — create / logs / ssh / terminate 💸
 
-> Uses a real T4. Pin `--provider gcp` (T4 is gcp-only). Cold start ~2 min.
+> Uses a real A100 on verda. Cold start is 5–8 min, most of it the image pull.
 
 ```bash
 mimiry session create \
-  --image nvcr.io/nvidia/cuda:12.6.2-runtime-ubuntu24.04 \
-  --gpu T4 --provider gcp --location europe-west4-a \
+  --image nvcr.io/nvidia/pytorch:24.01-py3 \
+  --gpu A100 --provider verda --location FIN-02 \
   --command "nvidia-smi && echo DONE" --wait
 ```
 
-- [ ] 💸 `create … --wait` prints `Created session <id>`, streams `state=…`, ends at `state=started`, prints the management hints
+- [ ] 💸 `create … --wait` prints `Created session <id>`, streams `state=…`, ends at `state=running`, prints the management hints
 - [ ] `mimiry session logs <id>` shows the container output (eventually `nvidia-smi` + `DONE`)
 - [ ] `mimiry session logs <id> --follow` streams live, then prints `-- session … --` when it ends (Ctrl-C to stop early)
 - [ ] `mimiry sessions --active` shows it while running
-- [ ] 💸 (interactive box) `mimiry session create --image …cuda…ubuntu24.04 --gpu T4 --provider gcp --wait` then **`mimiry session ssh <id>`** drops you into a shell (`nvidia-smi` works inside; `exit` to leave)
+- [ ] 💸 (interactive box) `mimiry session create --image nvcr.io/nvidia/pytorch:24.01-py3 --gpu A100 --wait` then **`mimiry session ssh <id>`** drops you into a shell (`nvidia-smi` works inside; `exit` to leave)
 - [ ] `mimiry session terminate <id>` → `Terminated <id>.`
 - [ ] after terminate, `mimiry session status <id>` shows a terminal state
 
@@ -82,18 +101,18 @@ the smallest volume the underlying provider accepts. An earlier version of this
 sheet used `--size-gb 50` and a shrink-to-10 check, both of which fail for that
 reason — a checklist error, not a defect. Use 100 as the floor everywhere here.
 
-- [ ] `volume create` returns JSON with a new `id`, `state: submitted`→`provisioned`
-- [ ] `mimiry volume list` shows it (table); `--json` gives raw
-- [ ] `mimiry volume status <id>` shows detail incl. `size_gb`, `attached_to`
-- [ ] `mimiry volume extend <id> --size-gb 200` → size grows; shrinking (e.g. `--size-gb 100`) is rejected by the API
-- [ ] 💸 (optional) attach at launch: `mimiry session create --image …ubuntu24.04 --gpu T4 --provider gcp --volume test-vol:/mnt/data --command "df -h /mnt/data" --wait` → logs show the mount
-- [ ] `mimiry volume delete <id>` → `Delete requested…`; then `mimiry volume list --all` shows it `deleted`
+- [x] `volume create` returns JSON with a new `id`, `state: submitted`→`provisioned`
+- [x] `mimiry volume list` shows it (table); `--json` gives raw
+- [x] `mimiry volume status <id>` shows detail incl. `size_gb`, `attached_to`
+- [x] `mimiry volume extend <id> --size-gb 200` → size grows; shrinking (e.g. `--size-gb 100`) is rejected by the API
+- [ ] 💸 (optional) attach at launch: `mimiry session create --image nvcr.io/nvidia/pytorch:24.01-py3 --gpu A100 --volume test-vol:/mnt/data --command "df -h /mnt/data" --wait` → logs show the mount
+- [x] `mimiry volume delete <id>` → `Delete requested…`; then `mimiry volume list --all` shows it `deleted`
 
 ## 6. Scriptability / ergonomics
 
 - [ ] `mimiry session status <failed-id>; echo $?` → exit `1` on a failed session
-- [ ] `mimiry --help`, `mimiry session --help`, `mimiry volume --help` all read cleanly
-- [ ] `mimiry session` (no subcommand) → usage error, exit `2`
+- [x] `mimiry --help`, `mimiry session --help`, `mimiry volume --help` all read cleanly
+- [x] `mimiry session` (no subcommand) → usage error, exit `2`
 
 ## 7. Teardown (avoid lingering cost)
 

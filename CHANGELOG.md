@@ -4,6 +4,58 @@ All notable changes to the `mimiry` SDK are documented here. This project
 roughly follows [Keep a Changelog](https://keepachangelog.com/) and
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+- **`@mimiry.function()` and `mimiry.run()` default to a job that can run.**
+  The old defaults were a `T4`, which no provider carries, and an
+  `nvcr.io/nvidia/cuda` image the platform cannot pull without registry
+  credentials, so a bare decorator always failed after a paid session. The
+  defaults are now the `A100` family and `nvcr.io/nvidia/pytorch:24.01-py3`
+  (Python 3.10); docstrings, README, TESTING.md and `examples/` no longer suggest
+  `provider="gcp"`, which does not exist.
+- **A GPU family with several sizes is no longer refused as ambiguous.**
+  `gpu="A100"` matches both the 40 GB and 80 GB A100 on the live catalog and
+  used to raise. `gpu.types` is a preference list on the API, so the SDK now
+  sends every matching type, cheapest first, and the platform picks.
+- **A location hint is honoured even without a provider hint.** The
+  availability preflight ignored `location` unless `provider` was also set,
+  so a session adopting a volume's location could be submitted to a location
+  with no matching GPU and die with "no GPU matches criteria" after it
+  existed. It is now refused locally, naming the locations that do offer it.
+- **A Python-version mismatch no longer costs a session.** Your function is
+  shipped to the container as a cloudpickle blob, which does not load on a
+  different Python minor version — the container crashed on arrival, the SDK
+  then spent its full five-minute SSH budget on the dead host, and the user
+  was billed and told sshd was unreachable. The caller's version is now sent
+  to the container, which refuses the payload before unpickling it and names
+  both versions. An image that declares its Python (new
+  `Image.python_version("3.11")`) is checked locally instead, so the call is
+  refused before a session is created.
+- **A dead session ends the SSH wait immediately.** `wait_for_sshd` now takes
+  the same terminal-state check `wait_for_remote_file` already had, and the
+  resulting failure carries the container's own log tail rather than an SSH
+  transport error.
+- **`session create --volume` settles the location before creating anything.**
+  With no `--location` the session adopts the volume's location; a conflicting
+  one is refused locally, naming both, instead of the platform killing the
+  session seconds after it exists. Volumes from two different locations are
+  refused as well. If the volume list can't be read, the request goes through
+  unchanged.
+
+### Changed
+- When a session ends before producing a result and the platform reports an
+  `error` (no capacity, no matching candidate), that error is the message.
+  The old text blamed the user's command for a failure that never reached a
+  container.
+- `function.py` and `run.py` no longer restate the terminal state names; both
+  derive them from `_session.TERMINAL_STATES`, which is what makes them
+  recognise `exited` and `pull_failed`.
+- Bootstrap failures are written to the container's log as well as the error
+  file, so the reason survives the container exiting.
+- `volume create --location` and `session create --location` help text now say
+  the location binds attachment rather than calling it a hint.
+
 ## [0.3.3] — 2026-06-15
 
 ### Fixed

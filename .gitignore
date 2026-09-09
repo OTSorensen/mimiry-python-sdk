@@ -53,3 +53,5 @@ Thumbs.db
 
 # Code review working artifacts (not source)
 .claude/review-reports/
+# code-review working artifacts
+context-pack*.md

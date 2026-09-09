@@ -21,6 +21,8 @@ from mimiry._availability import preflight_gpu_availability
 from mimiry._client import MimiryClient
 from mimiry._config import Config, get_config
 from mimiry._session import (
+    TERMINAL_STATES,
+    make_terminal_check,
     raise_if_ended_before_result,
     raise_if_failed,
     wait_for_ssh_ready,
@@ -29,6 +31,7 @@ from mimiry._session import (
 from mimiry._ssh import (
     CONTAINER_HOLD_TIMEOUT_SECONDS,
     DONE_FLAG,
+    SSHError,
     close_control_channel,
     fetch_remote_file,
     open_control_channel,
@@ -37,6 +40,7 @@ from mimiry._ssh import (
     wait_for_remote_file,
     wait_for_sshd,
 )
+from mimiry.function import DEFAULT_GPU
 from mimiry.image import Image, normalize_image
 
 # Paths the container writes; mimics the function flow but with plaintext output rather
@@ -85,7 +89,7 @@ def _wrap_command(user_command: str, install_prefix: str) -> str:
 def run(
     image: Image | str,
     *,
-    gpu: str = "T4",
+    gpu: str = DEFAULT_GPU,
     gpu_count: int = 1,
     command: str,
     timeout: int | None = None,
@@ -98,9 +102,9 @@ def run(
     Example::
 
         result = mimiry.run(
-            image="nvcr.io/nvidia/cuda:12.6.0-runtime-ubuntu22.04",
-            gpu="T4",
-            provider="gcp",
+            image="nvcr.io/nvidia/pytorch:24.01-py3",
+            gpu="A100",
+            provider="verda",
             command="nvidia-smi",
         )
         print(result.logs)
@@ -156,7 +160,7 @@ def run(
         # resolve a GPU family alias to the concrete catalog name the API
         # requires. Best-effort — see _availability.py.
         resolved_gpu = preflight_gpu_availability(client, gpu, provider, location)
-        payload["gpu"]["types"] = [resolved_gpu]
+        payload["gpu"]["types"] = resolved_gpu
 
         session = client.create_session(payload)
         session_id = session["id"]
@@ -176,19 +180,17 @@ def run(
 
             target = ssh_target_from_session(ssh_ready, config.ssh_key_path)
             _log(f"sshing into {target.host}:{target.port}")
-            wait_for_sshd(target)
+            terminal_check = make_terminal_check(client, session_id)
+            try:
+                wait_for_sshd(target, terminal_check=terminal_check)
+            except SSHError:
+                # A host that vanished because the container died is explained
+                # by the container's logs, not by an SSH transport error.
+                raise_if_ended_before_result(client.get_session(session_id), client=client)
+                raise
 
             _log("opening SSH control channel")
             target = open_control_channel(target)
-
-            _terminal_states = {"terminated", "completed", "failed", "stopped", "provision_failed"}
-
-            def _terminal_check() -> str | None:
-                try:
-                    s = (client.get_session(session_id).get("state") or "").lower()
-                except Exception:
-                    return None
-                return s if s in _terminal_states else None
 
             try:
                 _log(f"waiting for {_RUN_EXIT_FILE}")
@@ -196,7 +198,7 @@ def run(
                     target,
                     _RUN_EXIT_FILE,
                     max_wait_seconds=timeout_s,
-                    terminal_check=_terminal_check,
+                    terminal_check=terminal_check,
                 )
 
                 _log("fetching output")
@@ -224,7 +226,7 @@ def run(
             )
         finally:
             state = (client.get_session(session_id).get("state") or "").lower()
-            if state not in {"terminated", "completed", "failed", "stopped", "provision_failed"}:
+            if state not in TERMINAL_STATES:
                 try:
                     client.terminate_session(session_id)
                 except Exception:

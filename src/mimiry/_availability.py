@@ -5,8 +5,10 @@ a session is created — e.g. asking for a ``T4`` from ``verda`` (which doesn't
 carry it) fails the session with ``unsupported GPU type "T4"`` after a
 provisioning round-trip. This module catches that locally, before the POST,
 and turns it into an actionable error that names the providers which *do*
-offer the GPU. It also resolves a GPU *family* alias (``"T4"``) to the concrete
-catalog name the API now requires (``"T4_16G_PCIe"``).
+offer the GPU. It also resolves a GPU *family* alias (``"A100"``) to the
+concrete catalog names the API requires (``"A100_40G_SXM"``, ...), cheapest
+first — ``gpu.types`` is a preference list, so a family that maps to several
+types is sent as all of them rather than refused.
 
 Design: the check is **best-effort**. A definitive mismatch (the GPU isn't
 offered, or not by the requested provider/location) raises ``SessionError``.
@@ -28,16 +30,15 @@ def check_gpu_offered(
     gpu: str,
     provider: str | None,
     location: str | None,
-) -> str:
-    """Resolve ``gpu`` to the concrete catalog name the API expects, validating
+) -> list[str]:
+    """Resolve ``gpu`` to the concrete catalog names the API expects, validating
     the optional ``provider`` / ``location`` hints against ``models``.
 
-    ``gpu`` may be a concrete model ``name`` (e.g. ``"T4_16G_PCIe"``) or a
-    ``family`` alias (e.g. ``"T4"``); a family that maps to exactly one
-    available type is resolved to that type's name. Raises ``SessionError`` if
-    the type isn't offered, is unavailable, can't be satisfied by the requested
-    provider/location, or a family alias is ambiguous (maps to several
-    available types).
+    ``gpu`` may be a concrete model ``name`` (e.g. ``"A100_40G_SXM"``) or a
+    ``family`` alias (e.g. ``"A100"``). The result is the ``gpu.types``
+    preference list: every available type that satisfies the hints, cheapest
+    hourly rate first. Raises ``SessionError`` if the type isn't offered, is
+    unavailable, or can't be satisfied by the requested provider/location.
     """
     matches = [m for m in models if m.get("name") == gpu or m.get("family") == gpu]
     if not matches:
@@ -52,24 +53,32 @@ def check_gpu_offered(
         raise SessionError(f"GPU type {gpu!r} is currently unavailable on all providers.")
 
     if provider is None:
-        return _resolve_one(gpu, {m.get("name") for m in available if m.get("name")})
+        if location is not None:
+            # No provider hint, but a location — which is binding when it came
+            # from a mounted volume. Refuse now rather than after the platform
+            # reports "no GPU matches criteria" on a session that already exists.
+            offered_at = _priced_names(available, None, location)
+            if not offered_at:
+                locs = sorted({
+                    loc for m in available for p in m.get("providers", [])
+                    for loc in (p.get("locations") or [])
+                })
+                raise SessionError(
+                    f"GPU {gpu!r} is not currently offered in location {location!r}. "
+                    f"Available locations: {', '.join(locs) or 'none'}."
+                )
+            return offered_at
+        return _priced_names(available, None, None) or [gpu]
 
-    # Collapse available matches into provider → set(locations), and collect the
-    # concrete catalog names that satisfy the provider (and location) hint.
+    # Collapse available matches into provider → set(locations) so a mismatch
+    # can name the providers and locations that do offer the GPU.
     prov_locs: dict[str, set[str]] = {}
-    candidates: set[str] = set()
     for m in available:
-        satisfies = False
         for p in m.get("providers", []):
             pname = p.get("provider")
             if not pname:
                 continue
-            locs = p.get("locations") or []
-            prov_locs.setdefault(pname, set()).update(locs)
-            if pname == provider and (location is None or location in locs):
-                satisfies = True
-        if satisfies and m.get("name"):
-            candidates.add(m["name"])
+            prov_locs.setdefault(pname, set()).update(p.get("locations") or [])
 
     if provider not in prov_locs:
         offerers = ", ".join(sorted(prov_locs)) or "none"
@@ -87,25 +96,28 @@ def check_gpu_offered(
             f"Available locations: {locs}."
         )
 
-    return _resolve_one(gpu, candidates)
+    return _priced_names(available, provider, location) or [gpu]
 
 
-def _resolve_one(gpu: str, names: set[str | None]) -> str:
-    """Pick the single concrete catalog name from ``names``.
-
-    Returns it when there's exactly one; returns ``gpu`` unchanged when there's
-    nothing to resolve to (defer to the API); raises ``SessionError`` when a
-    family alias is ambiguous so the caller can pick an exact type.
+def _priced_names(models: list[dict], provider: str | None, location: str | None) -> list[str]:
+    """The concrete names in ``models`` that satisfy the hints, ordered by
+    their cheapest matching hourly rate. Empty when nothing satisfies them —
+    the caller decides whether that is a refusal or a deferral to the API.
     """
-    resolved = {n for n in names if n}
-    if len(resolved) == 1:
-        return next(iter(resolved))
-    if not resolved:
-        return gpu
-    raise SessionError(
-        f"GPU {gpu!r} matches multiple available types: "
-        f"{', '.join(sorted(resolved))}. Pass one of those exact names."
-    )
+    priced: list[tuple[float, str]] = []
+    for m in models:
+        name = m.get("name")
+        if not name:
+            continue
+        rates = [
+            float(p.get("hourly_rate") or 0)
+            for p in m.get("providers", [])
+            if (provider is None or p.get("provider") == provider)
+            and (location is None or location in (p.get("locations") or []))
+        ]
+        if rates:
+            priced.append((min(rates), name))
+    return [name for _, name in sorted(priced)]
 
 
 def preflight_gpu_availability(
@@ -113,20 +125,24 @@ def preflight_gpu_availability(
     gpu: str,
     provider: str | None,
     location: str | None = None,
-) -> str:
+) -> list[str]:
     """Best-effort pre-create check that also resolves a GPU family alias to the
-    concrete catalog name the API expects.
+    concrete catalog names the API expects.
 
-    Returns the name to send in ``gpu.types`` — the resolved concrete name, or
-    ``gpu`` unchanged if availability can't be consulted. Raises ``SessionError``
-    on a definitive mismatch. ``client`` only needs a ``get_availability()``
+    Returns the list to send in ``gpu.types`` — the resolved concrete names,
+    cheapest first, or ``[gpu]`` unchanged if availability can't be consulted.
+    Raises ``SessionError`` on a definitive mismatch. ``client`` only needs a ``get_availability()``
     method (see :class:`mimiry._client.MimiryClient`).
     """
     try:
         data = client.get_availability()
+        models = data.get("gpu_models") if isinstance(data, dict) else None
+        if not models:
+            return [gpu]  # nothing to validate against — defer to the API
+        return check_gpu_offered(models, gpu, provider, location)
+    except SessionError:
+        raise  # a definitive mismatch is the point of the check
     except Exception:
-        return gpu  # never block submission on an availability-endpoint hiccup
-    models = data.get("gpu_models") if isinstance(data, dict) else None
-    if not models:
-        return gpu  # nothing to validate against — defer to the API
-    return check_gpu_offered(models, gpu, provider, location)
+        # Fetching or reading the catalog failed — a best-effort layer must
+        # degrade, never raise; the API stays the source of truth.
+        return [gpu]

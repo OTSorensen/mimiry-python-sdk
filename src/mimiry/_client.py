@@ -125,7 +125,13 @@ class MimiryClient:
     # ────────── volumes ──────────
 
     def create_volume(self, payload: dict) -> dict:
-        """POST /volumes. ``payload``: ``{name, size_gb, [provider, location]}``."""
+        """POST /volumes. ``payload``: ``{name, size_gb, [provider, location]}``.
+
+        ``location`` is binding, not advisory: the volume is created there and
+        can only be mounted by a session running in that same location. Omitting
+        it lets the platform choose, which is what makes a later cross-location
+        attach fail.
+        """
         return self._json_or_raise(self._request("POST", "/volumes", json=payload))
 
     def list_volumes(self, **params: Any) -> list[dict]:

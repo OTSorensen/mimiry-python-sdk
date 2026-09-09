@@ -49,7 +49,7 @@ The sections below cover the common ones; everything is discoverable via `--help
 
 ## GPU types and providers
 
-Mimiry sources GPUs from both local datacenters and cloud providers across Europe and the US, spanning entry-level cards up to the latest high-end accelerators. You control locality and hardware requirements, as well as which providers to use.
+Mimiry sources GPUs from datacenters and cloud providers across Europe, spanning entry-level cards up to the latest high-end accelerators. You control locality and hardware requirements, as well as which providers to use.
 
 Always check what's currently available before selecting hardware:
 
@@ -57,7 +57,7 @@ Always check what's currently available before selecting hardware:
 mimiry availability
 ```
 
-Filter with `--gpu-family T4`, `--provider gcp`, `--location europe-west4-a`,
+Filter with `--gpu-family A100`, `--provider verda`, `--location FIN-02`,
 `--min-vram 16`, and/or `--available-only`.
 
 ## Managing sessions
@@ -66,8 +66,8 @@ Run and manage GPU sessions entirely from the CLI:
 
 ```bash
 # Launch a job (omit --command for an interactive box; --wait blocks until it starts)
-mimiry session create --image nvcr.io/nvidia/cuda:12.6.2-runtime-ubuntu24.04 \
-    --gpu T4 --provider gcp --command "nvidia-smi" --wait
+mimiry session create --image nvcr.io/nvidia/pytorch:24.01-py3 \
+    --gpu A100 --provider verda --command "nvidia-smi" --wait
 
 mimiry sessions                 # list recent sessions, newest first
 mimiry sessions --active        # only running / provisioning (i.e. still billing)
@@ -113,11 +113,20 @@ image. The SDK ships your function to the GPU with `cloudpickle`, which can't
 move code objects across Python versions — e.g. a function pickled on 3.12
 won't load on 3.10.
 
-You don't need to think about this with the default image: it ships Python
-3.12, matching recent Ubuntu / Debian / Fedora. It only matters if you set
-`image=` yourself — pick one whose `python3` matches your local interpreter.
-Confirm with `python3 --version` locally and inside the image; a mismatch
-shows up as a failure to deserialize your function.
+The SDK checks this for you, and how early it can check depends on what you
+tell it. Declare the image's Python and a mismatch is refused before a session
+is created, so a doomed run costs nothing:
+
+```python
+image = mimiry.Image.from_registry(
+    "docker.io/pytorch/pytorch:2.4.0-cuda12.1-cudnn9-runtime"
+).python_version("3.11")
+```
+
+Without that declaration the check still happens, but inside the container —
+you pay for the session, and the call fails naming both versions instead of
+crashing on arrival. Confirm a version with `python3 --version` locally and
+inside the image.
 
 ## Quickstart — one-shot function
 
@@ -125,8 +134,8 @@ shows up as a failure to deserialize your function.
 import mimiry
 
 @mimiry.function(
-    # Uses default hardware; run `mimiry availability` to choose a GPU/provider.
-    image="nvcr.io/nvidia/cuda:12.6.2-runtime-ubuntu24.04",
+    # Defaults to an A100; run `mimiry availability` to choose a GPU/provider.
+    image="nvcr.io/nvidia/pytorch:24.01-py3",
 )
 def gpu_info():
     import subprocess
@@ -144,7 +153,7 @@ print(gpu_info.remote())
 import mimiry
 
 result = mimiry.run(
-    image="nvcr.io/nvidia/cuda:12.6.2-runtime-ubuntu24.04",
+    image="nvcr.io/nvidia/pytorch:24.01-py3",
     command="nvidia-smi",
 )
 print(result.logs)
