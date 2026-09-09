@@ -14,6 +14,10 @@ roughly follows [Keep a Changelog](https://keepachangelog.com/) and
   defaults are now the `A100` family and `nvcr.io/nvidia/pytorch:24.01-py3`
   (Python 3.10); docstrings, README and `examples/` no longer suggest
   `provider="gcp"`, which does not exist.
+- **A GPU family with several sizes is no longer refused as ambiguous.**
+  `gpu="A100"` matches both the 40 GB and 80 GB A100 on the live catalog and
+  used to raise. `gpu.types` is a preference list on the API, so the SDK now
+  sends every matching type, cheapest first, and the platform picks.
 - **A Python-version mismatch no longer costs a session.** Your function is
   shipped to the container as a cloudpickle blob, which does not load on a
   different Python minor version — the container crashed on arrival, the SDK

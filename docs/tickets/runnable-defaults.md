@@ -11,6 +11,11 @@ removed for the same reason; the decorator did not, so a bare
 facts by paying for a failed session. The docstrings and README examples
 compounded it by suggesting `provider="gcp"`, which does not exist.
 
+The availability preflight refused a family alias that matched more than one
+type, and `A100` matches two on the live catalog. `gpu.types` is documented
+as a preference list, so the refusal was the SDK being stricter than the API
+for no gain: a default that is itself refused is no default.
+
 The `nvcr.io/nvidia/pytorch:24.01-py3` image, the OpenAPI spec's own example,
 pulls and runs on every provider today, and did in every prior test round.
 The registry allowlist and pull credentials are a platform concern (a Harbor
@@ -35,11 +40,14 @@ is one a user can paste and run.
 5. The comment beside the default image states the Python it ships and that
    the caller's Python minor must match, so a mismatch is not a surprise.
 
+6. A GPU family alias that maps to several available types (`A100` today
+   is both `A100_40G_SXM` and `A100_80G_SXM`) is sent as a `gpu.types`
+   preference list, cheapest first, instead of being refused as ambiguous.
+   The order uses the hourly rate of the hinted provider and location only.
+
 ## Non-goals
 
 - Probing the registry or the image's Python ahead of time.
-- Any change to GPU alias resolution; `A100` resolves through the existing
-  availability preflight exactly as a user-supplied alias does.
 
 ## Verification
 

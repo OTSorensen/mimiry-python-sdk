@@ -246,7 +246,7 @@ def _run_remote(fn: Callable, cfg: FunctionConfig, args: tuple, kwargs: dict) ->
         # the concrete catalog name the API requires. Best-effort — a flaky
         # availability endpoint won't block submission. See _availability.py.
         resolved_gpu = preflight_gpu_availability(client, cfg.gpu, cfg.provider, cfg.location)
-        session_payload["gpu"]["types"] = [resolved_gpu]
+        session_payload["gpu"]["types"] = resolved_gpu
 
         session = client.create_session(session_payload)
         session_id = session["id"]

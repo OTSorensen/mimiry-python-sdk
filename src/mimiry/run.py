@@ -160,7 +160,7 @@ def run(
         # resolve a GPU family alias to the concrete catalog name the API
         # requires. Best-effort — see _availability.py.
         resolved_gpu = preflight_gpu_availability(client, gpu, provider, location)
-        payload["gpu"]["types"] = [resolved_gpu]
+        payload["gpu"]["types"] = resolved_gpu
 
         session = client.create_session(payload)
         session_id = session["id"]

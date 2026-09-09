@@ -272,7 +272,7 @@ def cmd_session_create(args: argparse.Namespace) -> int:
         # Resolve a GPU family alias (e.g. "A100") to the concrete catalog name
         # the API requires, and fail fast on an impossible combo. Best-effort.
         resolved_gpu = preflight_gpu_availability(c, args.gpu, args.provider, location)
-        payload["gpu"]["types"] = [resolved_gpu]
+        payload["gpu"]["types"] = resolved_gpu
         if location and location != args.location:
             print(f"Using location {location} — the attached volume lives there.")
         session = c.create_session(payload)
