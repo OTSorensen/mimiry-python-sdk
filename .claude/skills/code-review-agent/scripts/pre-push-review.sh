@@ -132,6 +132,15 @@ fi
 mkdir -p .claude/review-reports
 STAMP="$(date +%Y%m%d-%H%M%S)"
 SCRATCH="$(mktemp -d)"
+# The run is DISCOVERABLE: cra-watch.py (the out-of-process observer) attaches
+# through this pointer — stamp, scratch dir, this shell's pid and its kernel
+# start time (so a reused pid after a hard kill is not mistaken for a live
+# run). Written once, never read by this script. Every write on the observer's
+# behalf is best-effort (`|| true`): the plumbing that lets a review be watched
+# must never be able to end one.
+{ printf '%s\t%s\t%s\t%s\t%s\n' "$STAMP" "$SCRATCH" "$$" \
+    "$(sed 's/^.*) //' /proc/$$/stat 2>/dev/null | awk '{print $20}' || echo 0)" "$REPO_ROOT" \
+    > "$(git rev-parse --absolute-git-dir)/cra-run-current"; } 2>/dev/null || true
 # Deliberately NO `trap ... EXIT` for the cleanup. Bash runs inherited EXIT traps
 # when a command- or process-substitution subshell finishes, so a trap here
 # deletes the scratch directory in the middle of the run — measured 2026-08-04:
@@ -730,8 +739,13 @@ review_pack() {
   # >=2-specialist agreement the skill's merge rules weigh. eval/run_case.sh has
   # carried this wording since it was written; the hook had only the
   # report-the-mode clause, which detects the degradation without preventing it.
+  # stdin is /dev/null, deliberately. The hook inherits git's ref-list pipe, and
+  # `claude -p` on a non-tty stdin waits 3 s for data before proceeding (measured
+  # 2026-09-08: "no stdin data received in 3s, proceeding without it") — a
+  # silent 3 s tax per pack and a warning line, for input the reviewer must
+  # never consume anyway: the pack is the whole brief.
   if ! claude -p "Use the code-review-agent skill. A context pack is pre-built at $pack — review it per the skill's headless mode and print the full report. Subagent dispatch is available and expected: run the specialist passes as parallel subagents per the skill's execution-mode rule. Fall back to inline passes only if dispatch genuinely fails, and say so in the header. The report header MUST state 'Execution mode: parallel-specialists' or 'Execution mode: inline-sequential' per which mode step 4 actually ran. End with the machine-readable json block.${scope_note}" \
-    --allowedTools "${REVIEW_TOOLS[@]}" --disallowedTools "${REVIEW_DENY[@]}" | tee "$report"; then
+    --allowedTools "${REVIEW_TOOLS[@]}" --disallowedTools "${REVIEW_DENY[@]}" </dev/null | tee "$report"; then
     echo "review did not complete for $pack — scoring UNDETERMINED, not zero" >&2
     UNDETERMINED=1
     return 0
@@ -941,10 +955,22 @@ claim_report() {  # <slug> — prints a slug no other pack in this run holds
   while ! mkdir "$SCRATCH/slug/$slug" 2>/dev/null; do
     # Not EEXIST: the name itself is unusable (a full disk, a lost scratch dir,
     # a length the cap above did not foresee). Looping cannot fix any of those.
-    # Return a name unique to this process and let the pack proceed — a report
-    # written under an odd name beats a push that never returns.
+    # Hand out a name unique to this call and let the pack proceed — a report
+    # written under an odd name beats a push that never returns. $BASHPID, not
+    # $$: every pool job is a subshell, and $$ is the parent's pid in all of
+    # them (reviews 20260908-113713 and the mimiry review of the same commit);
+    # $RANDOM separates the recursion's frames, which share a BASHPID. The
+    # fallback is CLAIMED like any other name (review 20260908-183536: an
+    # unclaimed one broke this function's contract) — three tries, bounded,
+    # because an unbounded retry here is the loop this function just lost.
     if [ ! -d "$SCRATCH/slug/$slug" ]; then
-      printf '%s' "$base-$$"
+      local fb
+      for k in 1 2 3; do
+        fb="$base-$BASHPID-$RANDOM"
+        if mkdir "$SCRATCH/slug/$fb" 2>/dev/null; then printf '%s' "$fb"; return 0; fi
+      done
+      echo "claim_report: could not claim any name under $SCRATCH/slug — using $fb unclaimed" >&2
+      printf '%s' "$fb"
       return 0
     fi
     k=$((k + 1)); slug="$base-$k"
@@ -1332,6 +1358,10 @@ elif [ "$rc" -eq 65 ]; then
       START_N[$n]=$SECONDS
       run_one_pack "$n" "${PACK_GROUPS[$next]}" > "$SCRATCH/packout-$n" 2>&1 &
       PID_N[$n]=$!
+      # One manifest row per pack for cra-watch.py: number, pid, launch epoch,
+      # spec. Append-only, best-effort; nothing here reads it back.
+      printf '%s\t%s\t%s\t%s\n' "$n" "$!" "$(date +%s)" "${PACK_GROUPS[$next]}" \
+        >> "$SCRATCH/pool.tsv" 2>/dev/null || true
       next=$((next + 1)); running=$((running + 1))
     done
     # `|| true`: a failed job must reach fold_pack_status (which fails closed

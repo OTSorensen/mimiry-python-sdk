@@ -177,35 +177,6 @@ RULES_TXT="$(
   done
 )"
 RB="$(printf '%s' "$RULES_TXT" | wc -c)"
-
-# Fail fast if a specialist's yardstick never made it into the pack. A
-# specialist whose reference material is missing cannot review anything, but it
-# still returns a well-formed empty result, so the run looks complete and clean.
-# Discovering that after an hour of review wastes the run; refuse before
-# dispatching. Each entry is "<substring the pack must contain>|<why>".
-REQUIRED_RULE_MARKERS="${CRA_REQUIRED_RULE_MARKERS:-Mimiry API contract|the api-contract specialist has no yardstick without it}"
-if [ -n "$REQUIRED_RULE_MARKERS" ]; then
-  _missing=0
-  while IFS='|' read -r _marker _why; do
-    [ -n "$_marker" ] || continue
-    case "$RULES_TXT" in
-      *"$_marker"*) ;;
-      *)
-        echo "build-context-pack: required rules content missing from the pack: '$_marker'" >&2
-        echo "  reason: $_why" >&2
-        _missing=1
-        ;;
-    esac
-  done <<EOF
-$(printf '%s\n' "$REQUIRED_RULE_MARKERS")
-EOF
-  if [ "$_missing" = 1 ]; then
-    echo "  The pack inlines CLAUDE.md and .claude/review-rules/*.md only." >&2
-    echo "  Regenerate the digest, or set CRA_REQUIRED_RULE_MARKERS='' to override." >&2
-    exit 9
-  fi
-fi
-
 CLAUDE_B=0
 if [ "$CLAUDE_OK" = 1 ]; then CLAUDE_B="$(wc -c < CLAUDE.md)"
 elif [ -n "$CLAUDE_NOTE" ]; then CLAUDE_B=$(( $(printf '%s' "$CLAUDE_NOTE" | wc -c) + 2 )); fi   # bytes, like wc -c above

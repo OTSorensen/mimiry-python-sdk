@@ -17,10 +17,10 @@ reverts it.
 | | |
 |---|---|
 | Upstream repo | `~/projects/code-review-agent` (`github.com/OTSorensen/code-review-agent`) |
-| Copied from commit | `a761262a870a7da721d12ff035e733ce547ccaa4` |
-| Commit date | 2026-08-23 |
-| Subject | The guard's comment points at the one enumeration of its readers |
-| Copied on | 2026-09-04 |
+| Copied from commit | `8ce07a43d9f364c0440f96230a4e201d26f43928` |
+| Commit date | 2026-09-08 |
+| Subject | claim_report's fallback name is claimed like any other, --notify says it runs without a shell, and review reports are ignored |
+| Copied on | 2026-09-09 |
 
 ## Intentional divergences from upstream
 
@@ -53,7 +53,7 @@ line plus a prompt file.
 
 ```
 # What upstream is now, vs what this copy was taken from:
-git -C ~/projects/code-review-agent log --oneline a761262a870a7da721d12ff035e733ce547ccaa4..HEAD
+git -C ~/projects/code-review-agent log --oneline 8ce07a43d9f364c0440f96230a4e201d26f43928..HEAD
 
 # What actually differs (expect only the divergences listed above):
 diff -r ~/projects/code-review-agent/skills/code-review-agent \
