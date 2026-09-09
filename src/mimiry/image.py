@@ -129,7 +129,8 @@ def _normalize_python_version(version: str) -> str:
     """
     parts = str(version).strip().split(".")
     if len(parts) < 2 or not all(p.isdigit() for p in parts[:2]):
-        raise ValueError(
-            f"python_version must look like '3.11' (got: {version!r})"
+        raise MimiryError(
+            f"python_version must look like '3.11' (got: {version!r}). "
+            f"Pass the major.minor of the python3 inside the image."
         )
     return f"{int(parts[0])}.{int(parts[1])}"

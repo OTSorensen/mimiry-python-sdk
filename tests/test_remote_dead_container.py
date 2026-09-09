@@ -80,7 +80,7 @@ def dead_session(monkeypatch, tmp_path):
     monkeypatch.setattr(function_mod, "get_token", lambda *a, **kw: "tok")
     monkeypatch.setattr(function_mod, "MimiryClient", lambda token: client)
     monkeypatch.setattr(
-        function_mod, "preflight_gpu_availability", lambda *a, **kw: "H100_80G_SXM"
+        function_mod, "preflight_gpu_availability", lambda *a, **kw: ["H100_80G_SXM"]
     )
     # sshd never answers: the host went away with the container.
     monkeypatch.setattr(
@@ -150,3 +150,5 @@ def test_the_callers_python_version_is_sent_to_the_container(monkeypatch, dead_s
         _run_remote(_square, FunctionConfig(gpu="H100_80G_SXM"), (7,), {})
     captured = dead_session.payload["environment_vars"]
     assert captured["MIMIRY_CALLER_PYTHON"] == function_mod.caller_python_version()
+    # The preflight's result is the gpu.types preference list the API receives.
+    assert dead_session.payload["gpu"]["types"] == ["H100_80G_SXM"]

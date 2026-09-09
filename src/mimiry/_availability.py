@@ -136,9 +136,13 @@ def preflight_gpu_availability(
     """
     try:
         data = client.get_availability()
+        models = data.get("gpu_models") if isinstance(data, dict) else None
+        if not models:
+            return [gpu]  # nothing to validate against — defer to the API
+        return check_gpu_offered(models, gpu, provider, location)
+    except SessionError:
+        raise  # a definitive mismatch is the point of the check
     except Exception:
-        return [gpu]  # never block submission on an availability-endpoint hiccup
-    models = data.get("gpu_models") if isinstance(data, dict) else None
-    if not models:
-        return [gpu]  # nothing to validate against — defer to the API
-    return check_gpu_offered(models, gpu, provider, location)
+        # Fetching or reading the catalog failed — a best-effort layer must
+        # degrade, never raise; the API stays the source of truth.
+        return [gpu]

@@ -163,6 +163,13 @@ def test_preflight_returns_gpu_unchanged_when_fetch_fails():
     assert preflight_gpu_availability(client, "T4", "verda", None) == ["T4"]
 
 
+def test_preflight_returns_gpu_unchanged_when_payload_is_malformed():
+    # A catalog that cannot be read is the same as one that cannot be fetched.
+    # (a model entry that is not a mapping blows up the coercion, not the fetch)
+    client = _FakeClient(data={"gpu_models": ["T4_16G_PCIe"]})
+    assert preflight_gpu_availability(client, "T4", "verda", None) == ["T4"]
+
+
 def test_preflight_returns_gpu_unchanged_when_no_models():
     client = _FakeClient(data={})  # malformed/empty → nothing to validate against
     assert preflight_gpu_availability(client, "T4", "verda", None) == ["T4"]

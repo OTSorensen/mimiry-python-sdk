@@ -543,12 +543,20 @@ class _StatesClient(_FakeClient):
 
 
 def _stub_create_env(monkeypatch):
-    monkeypatch.setattr(cli, "preflight_gpu_availability", lambda *a, **k: "A100_40G_SXM")
+    monkeypatch.setattr(cli, "preflight_gpu_availability", lambda *a, **k: ["A100_40G_SXM"])
     monkeypatch.setattr(cli, "_pubkey", lambda: "ssh-ed25519 AAAA test@host")
 
 
 def _create_argv():
     return ["session", "create", "--image", "img", "--gpu", "A100_40G_SXM", "--wait"]
+
+
+def test_create_sends_the_preflight_result_as_the_types_list(patch_client, monkeypatch):
+    monkeypatch.setattr(cli, "preflight_gpu_availability", lambda *a, **k: ["A100_40G_SXM", "A100_80G_SXM"])
+    monkeypatch.setattr(cli, "_pubkey", lambda: "ssh-ed25519 AAAA test@host")
+    fake = patch_client(_FakeClient(created={"id": "s1", "state": "submitted"}))
+    assert cli.main(["session", "create", "--image", "img", "--gpu", "A100"]) == 0
+    assert fake.calls["create_session"]["gpu"]["types"] == ["A100_40G_SXM", "A100_80G_SXM"]
 
 
 def test_create_wait_batch_completion_exits_zero(patch_client, capsys, monkeypatch):

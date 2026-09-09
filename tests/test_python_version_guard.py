@@ -56,7 +56,7 @@ def test_undeclared_image_is_not_refused_locally():
 
 
 def test_malformed_declaration_is_rejected_at_declaration_time():
-    with pytest.raises(ValueError):
+    with pytest.raises(MimiryError):
         Image.from_registry("x").python_version("python3")
 
 
