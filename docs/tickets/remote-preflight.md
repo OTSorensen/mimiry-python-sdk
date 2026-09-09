@@ -61,6 +61,9 @@ timeout for information that was available immediately.
     session is still created.
 14. `volume create --help` and `session create --help` describe location as
     binding on attachment rather than as a hint.
+15. When a session ends before a result and the platform's payload carries an
+    `error`, the raised message leads with that error and does not claim the
+    command failed during startup.
 
 ## Non-goals
 

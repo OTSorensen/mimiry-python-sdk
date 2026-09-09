@@ -39,6 +39,10 @@ roughly follows [Keep a Changelog](https://keepachangelog.com/) and
   unchanged.
 
 ### Changed
+- When a session ends before producing a result and the platform reports an
+  `error` (no capacity, no matching candidate), that error is the message.
+  The old text blamed the user's command for a failure that never reached a
+  container.
 - `function.py` and `run.py` no longer restate the terminal state names; both
   derive them from `_session.TERMINAL_STATES`, which is what makes them
   recognise `exited` and `pull_failed`.

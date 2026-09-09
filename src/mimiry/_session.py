@@ -242,11 +242,22 @@ def raise_if_ended_before_result(
         except Exception:
             events = None
 
-    msg = (
-        f"session {session_id} ended in state={state} (stop_reason={stop_reason}) "
-        f"before the container produced a result — the command likely failed during "
-        f"startup"
-    )
+    # The platform's own ``error`` is the diagnosis when it has one — a
+    # provisioning failure (no capacity, no candidate) never reached a
+    # container, and blaming the user's command for it sends them debugging
+    # the wrong thing.
+    error = (session_payload.get("error") or "").strip()
+    if error:
+        msg = (
+            f"session {session_id} ended in state={state} before the container "
+            f"produced a result. Platform error: {error}"
+        )
+    else:
+        msg = (
+            f"session {session_id} ended in state={state} (stop_reason={stop_reason}) "
+            f"before the container produced a result — the command likely failed during "
+            f"startup"
+        )
     if tail:
         msg += f". Last container logs:\n{tail}"
     raise SessionFailed(
