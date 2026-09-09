@@ -112,6 +112,15 @@ def test_ok_when_location_matches():
     assert check_gpu_offered(MODELS, "T4", "gcp", "europe-west4-a") == ["T4_16G_PCIe"]
 
 
+def test_location_without_provider_filters_and_refuses():
+    # A location with no provider hint — the volume-adoption path — must be
+    # honoured, not ignored: refused when nothing is offered there.
+    assert check_gpu_offered(MODELS, "H100", None, "US-EAST-1") == ["H100_SXM"]
+    with pytest.raises(SessionError, match="not currently offered in location 'MARS'") as exc:
+        check_gpu_offered(MODELS, "H100", None, "MARS")
+    assert "FIN-01" in str(exc.value) and "US-EAST-1" in str(exc.value)
+
+
 def test_raises_when_location_not_offered_by_provider():
     with pytest.raises(SessionError, match="not in location 'us-central1'") as exc:
         check_gpu_offered(MODELS, "T4", "gcp", "us-central1")

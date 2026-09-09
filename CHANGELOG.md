@@ -18,6 +18,11 @@ roughly follows [Keep a Changelog](https://keepachangelog.com/) and
   `gpu="A100"` matches both the 40 GB and 80 GB A100 on the live catalog and
   used to raise. `gpu.types` is a preference list on the API, so the SDK now
   sends every matching type, cheapest first, and the platform picks.
+- **A location hint is honoured even without a provider hint.** The
+  availability preflight ignored `location` unless `provider` was also set,
+  so a session adopting a volume's location could be submitted to a location
+  with no matching GPU and die with "no GPU matches criteria" after it
+  existed. It is now refused locally, naming the locations that do offer it.
 - **A Python-version mismatch no longer costs a session.** Your function is
   shipped to the container as a cloudpickle blob, which does not load on a
   different Python minor version — the container crashed on arrival, the SDK

@@ -44,6 +44,9 @@ is one a user can paste and run.
    is both `A100_40G_SXM` and `A100_80G_SXM`) is sent as a `gpu.types`
    preference list, cheapest first, instead of being refused as ambiguous.
    The order uses the hourly rate of the hinted provider and location only.
+7. A location hint with no provider hint filters the catalog by that location
+   and is refused, naming the locations that do offer the GPU, when nothing
+   is offered there. (This is the path a mounted volume's location takes.)
 
 ## Non-goals
 

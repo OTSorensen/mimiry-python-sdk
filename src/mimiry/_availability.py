@@ -53,6 +53,21 @@ def check_gpu_offered(
         raise SessionError(f"GPU type {gpu!r} is currently unavailable on all providers.")
 
     if provider is None:
+        if location is not None:
+            # No provider hint, but a location — which is binding when it came
+            # from a mounted volume. Refuse now rather than after the platform
+            # reports "no GPU matches criteria" on a session that already exists.
+            offered_at = _by_price(gpu, available, None, location)
+            if offered_at == [gpu]:
+                locs = sorted({
+                    loc for m in available for p in m.get("providers", [])
+                    for loc in (p.get("locations") or [])
+                })
+                raise SessionError(
+                    f"GPU {gpu!r} is not currently offered in location {location!r}. "
+                    f"Available locations: {', '.join(locs) or 'none'}."
+                )
+            return offered_at
         return _by_price(gpu, available, None, None)
 
     # Collapse available matches into provider → set(locations) so a mismatch
@@ -119,8 +134,8 @@ def preflight_gpu_availability(
     concrete catalog names the API expects.
 
     Returns the list to send in ``gpu.types`` — the resolved concrete names,
-    cheapest first, or ``[gpu]`` unchanged if availability can't be consulted. Raises ``SessionError``
-    on a definitive mismatch. ``client`` only needs a ``get_availability()``
+    cheapest first, or ``[gpu]`` unchanged if availability can't be consulted.
+    Raises ``SessionError`` on a definitive mismatch. ``client`` only needs a ``get_availability()``
     method (see :class:`mimiry._client.MimiryClient`).
     """
     try:
