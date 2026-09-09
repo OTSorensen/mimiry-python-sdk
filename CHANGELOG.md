@@ -6,6 +6,20 @@ roughly follows [Keep a Changelog](https://keepachangelog.com/) and
 
 ## [Unreleased]
 
+### Added
+- **`.map()` runs every item on one session.** The function ships once; each
+  item's arguments are pushed over the SSH channel and its result comes back
+  the same way, so the five-to-eight-minute cold start is paid once instead
+  of per item. An item that raises inside the container no longer aborts the
+  rest: `MapError` is raised at the end with `results` (`None` at the failed
+  index) and `failures`. A session that dies part-way raises the same error
+  carrying everything that had finished, so paid work is never thrown away.
+- **`@mimiry.function(volume=...)`.** A volume name mounts at `/data`; a
+  `{name: path}` mapping picks mount points. The session adopts the volume's
+  location, and a conflicting `location=` is refused before anything exists —
+  the same preflight the CLI's `--volume` already had.
+- `MapError` and `RemoteFunctionError` are exported from `mimiry`.
+
 ### Fixed
 - **`@mimiry.function()` and `mimiry.run()` default to a job that can run.**
   The old defaults were a `T4`, which no provider carries, and an

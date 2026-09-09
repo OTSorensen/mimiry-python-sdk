@@ -39,6 +39,33 @@ class SessionFailed(SessionError):
         self.events = events
 
 
+class MapError(SessionError):
+    """``.map()`` could not complete every item. Carries what did finish.
+
+    ``results`` is the full-length list with ``None`` where an item failed or
+    was never reached; ``failures`` is ``[(index, exception), ...]``. A
+    session that died mid-run appears as the failure at the first
+    unfinished index.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        results: list,
+        failures: list,
+        total: int,
+    ) -> None:
+        super().__init__(message)
+        self.results = results
+        self.failures = failures
+        self.total = total
+
+    @property
+    def completed(self) -> int:
+        return self.total - len(self.failures)
+
+
 class SessionTimeout(SessionError):
     """The session did not reach a terminal state within the configured timeout."""
 

@@ -94,7 +94,38 @@ mimiry volume extend <id> --size-gb 200  # grow only (cannot shrink)
 mimiry volume delete <id>
 ```
 
-Attach one at launch: `mimiry session create … --volume data:/mnt/data`.
+Attach one at launch: `mimiry session create … --volume data:/mnt/data`, or
+from Python:
+
+```python
+@mimiry.function(gpu="A100", volume="data")          # mounted at /data
+def train(step: int) -> None:
+    torch.save(state, f"/data/ckpt-{step}.pt")
+
+@mimiry.function(gpu="A100", volume={"data": "/data", "models": "/models"})
+def infer(prompt: str) -> str: ...
+```
+
+A volume lives in one location. The session adopts it; a `location=` that
+disagrees is refused before the session exists.
+
+## Many calls, one session
+
+`.map()` creates a single session and streams every item through it, so the
+cold start (provision, boot, image pull — five to eight minutes today) is paid
+once:
+
+```python
+@mimiry.function(gpu="A100")
+def embed(text: str) -> list[float]: ...
+
+vectors = embed.map(["first", "second", "third"])
+```
+
+Items run one after another on that session. If an item raises inside the
+container the rest still run, and `MapError` is raised at the end carrying
+`results` (with `None` at the failed index) and `failures`. If the session
+itself dies part-way, the same error carries everything that had finished.
 
 ## Account
 
@@ -163,9 +194,9 @@ print(result.logs)
 
 **Python SDK**
 
-- `@mimiry.function(gpu=..., image=...)` decorator
+- `@mimiry.function(gpu=..., image=..., volume=...)` decorator
 - `.remote(*args, **kwargs)` — sync call, returns the function's return value
-- `.map(iterable)` — runs the function over an iterable, sequentially
+- `.map(iterable)` — every item on one session, in order; partial results survive a failure (`MapError`)
 - `Image.from_registry(uri).pip_install(...).apt_install(...)` — basic image customisation (installs at container start; no real Dockerfile build)
 - `mimiry.run(image, gpu, command)` — raw bash entrypoint
 - SSH-JWT auth via existing key

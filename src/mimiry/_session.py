@@ -22,11 +22,11 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Callable
+from typing import Any, Callable
 
 from mimiry._client import MimiryClient
 from mimiry._config import Config
-from mimiry.exceptions import SessionFailed, SessionTimeout
+from mimiry.exceptions import SessionError, SessionFailed, SessionTimeout
 
 #: The state in which the container is up and SSH is reachable.
 READY_STATE = "running"
@@ -267,3 +267,61 @@ def raise_if_ended_before_result(
         stop_reason=stop_reason,
         events=events,
     )
+
+
+def preflight_volume_location(
+    client: Any, mounts: list, requested_location: str | None
+) -> str | None:
+    """Reconcile the session's location with the locations of the volumes it
+    mounts, returning the location to use (or ``None`` to leave it as-is).
+
+    A volume lives in one location and the platform refuses to attach it
+    anywhere else — but only after the session has been created, so the user
+    watches a session appear and die instead of being told upfront. When no
+    location was requested, the volume's own location is adopted; when one was
+    requested and disagrees, the session is refused before it exists.
+
+    Best-effort in one direction only: a definite mismatch raises, but any
+    failure to *read* the volumes (network, unknown name, a payload without a
+    location) leaves the request untouched and lets the platform decide.
+    """
+    names = [m.get("volume_name") for m in mounts if m.get("volume_name")]
+    if not names:
+        return None
+
+    try:
+        volumes = client.list_volumes()
+    except Exception:
+        return None
+
+    by_name = {v.get("name"): v for v in volumes if isinstance(v, dict) and v.get("name")}
+    located: dict[str, str] = {}
+    for name in names:
+        loc = (by_name.get(name) or {}).get("location")
+        if loc:
+            located[name] = loc
+
+    if not located:
+        return None
+
+    distinct = set(located.values())
+    if len(distinct) > 1:
+        detail = ", ".join(f"{n} in {loc}" for n, loc in sorted(located.items()))
+        raise SessionError(
+            f"the requested volumes are in different locations ({detail}); a session "
+            f"runs in one location and can only mount volumes that live there. "
+            f"Attach volumes from a single location, or create the missing one with "
+            f"`mimiry volume create --location <location>`."
+        )
+
+    volume_location = distinct.pop()
+    if requested_location and requested_location != volume_location:
+        names_txt = ", ".join(sorted(located))
+        raise SessionError(
+            f"--location {requested_location} conflicts with volume {names_txt}, which "
+            f"is in {volume_location}. A volume can only be mounted by a session in its "
+            f"own location. Re-run with --location {volume_location}, or create a volume "
+            f"in {requested_location} with `mimiry volume create --location "
+            f"{requested_location}`."
+        )
+    return volume_location

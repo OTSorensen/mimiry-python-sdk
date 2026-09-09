@@ -37,6 +37,11 @@ from mimiry.exceptions import MimiryError
 RESULT_FILE = "/tmp/mimiry_result.b64"
 DONE_FLAG = "/tmp/mimiry_done"
 ERROR_FILE = "/tmp/mimiry_bootstrap_error"
+# Worker mode (``.map()``): one session serves many calls. The SDK pushes
+# ``<n>.b64`` into CALLS_DIR; the container answers with ``<n>.b64`` in
+# RESULTS_DIR. Indices are contiguous from 0 and processed in order.
+CALLS_DIR = "/tmp/mimiry_calls"
+RESULTS_DIR = "/tmp/mimiry_results"
 
 # How long the container will wait for the SDK to fetch its result before giving up.
 # Bounds the runaway-cost scenario if the SDK crashes after submitting.
@@ -115,6 +120,7 @@ def _ssh_cmd(
     *,
     timeout: int = _DEFAULT_CMD_TIMEOUT_SECONDS,
     retries: int = _CMD_RETRIES,
+    stdin: bytes | None = None,
 ) -> subprocess.CompletedProcess:
     """Run a remote command. Retries on TimeoutExpired or transient nonzero exits.
 
@@ -130,7 +136,7 @@ def _ssh_cmd(
     last_err: str | None = None
     for attempt in range(1, retries + 1):
         try:
-            return subprocess.run(args, capture_output=True, timeout=timeout)
+            return subprocess.run(args, capture_output=True, timeout=timeout, input=stdin)
         except subprocess.TimeoutExpired as e:
             last_err = f"timeout after {timeout}s"
             if attempt >= retries:
@@ -319,6 +325,23 @@ def fetch_remote_file(target: SshTarget, path: str) -> bytes:
             f"ssh cat {path} returned {r.returncode}: {r.stderr.decode(errors='replace').strip()}"
         )
     return r.stdout
+
+
+def push_remote_file(target: SshTarget, path: str, data: bytes) -> None:
+    """Write ``data`` to ``path`` on the container, atomically: the bytes land
+    in a sibling ``.partial`` file and are renamed into place, so the
+    container's poller never reads a half-written call.
+    """
+    r = _ssh_cmd(
+        target,
+        f"cat > {path}.partial && mv {path}.partial {path}",
+        timeout=120,
+        stdin=data,
+    )
+    if r.returncode != 0:
+        raise SSHError(
+            f"ssh write {path} returned {r.returncode}: {r.stderr.decode(errors='replace').strip()}"
+        )
 
 
 def signal_done(target: SshTarget) -> None:

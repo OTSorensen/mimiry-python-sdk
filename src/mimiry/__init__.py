@@ -10,9 +10,11 @@ from mimiry.exceptions import (
     SessionError,
     SessionFailed,
     SessionTimeout,
+    MapError,
     ResultParseError,
     ResultIntegrityError,
 )
+from mimiry._serialization import RemoteFunctionError
 from mimiry.function import function, Function
 from mimiry.image import Image
 from mimiry.run import run
@@ -32,6 +34,8 @@ __all__ = [
     "SessionError",
     "SessionFailed",
     "SessionTimeout",
+    "MapError",
     "ResultParseError",
     "ResultIntegrityError",
+    "RemoteFunctionError",
 ]

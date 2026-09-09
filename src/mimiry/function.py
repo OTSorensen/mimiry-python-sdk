@@ -1,8 +1,11 @@
 """``@mimiry.function`` decorator and the ``Function`` runtime class.
 
-v1 contract: every ``.remote()`` call creates a fresh Mimiry session, runs the
-user's function inside it, and connects over SSH to fetch the serialized return
-value. Cold-start is ~2 minutes. There is no warm pool in v1.
+``.remote()`` creates a fresh Mimiry session, runs the user's function inside
+it, and connects over SSH to fetch the serialized return value. ``.map()``
+creates one session and streams every item through it: the cold start
+(provision, boot, image pull — five to eight minutes today) is paid once, not
+per item, and an item that fails does not discard the ones that finished.
+There is no warm pool.
 """
 
 from __future__ import annotations
@@ -20,11 +23,14 @@ from mimiry._availability import preflight_gpu_availability
 from mimiry._client import MimiryClient
 from mimiry._config import get_config
 from mimiry._serialization import (
+    RemoteFunctionError,
     build_bootstrap_script,
     caller_python_env_var,
     caller_python_version,
     new_result_hmac_key,
+    pack_args,
     pack_call,
+    pack_fn,
     parse_result,
     payload_env_var,
     result_hmac_env_var,
@@ -33,23 +39,28 @@ from mimiry._serialization import (
 from mimiry._session import (
     TERMINAL_STATES,
     make_terminal_check,
+    preflight_volume_location,
     raise_if_ended_before_result,
     raise_if_failed,
     wait_for_ssh_ready,
     wait_for_started_or_terminal,
 )
 from mimiry._ssh import (
+    CALLS_DIR,
     RESULT_FILE,
+    RESULTS_DIR,
     SSHError,
+    SshTarget,
     close_control_channel,
     fetch_remote_file,
     open_control_channel,
+    push_remote_file,
     signal_done,
     ssh_target_from_session,
     wait_for_remote_file,
     wait_for_sshd,
 )
-from mimiry.exceptions import ResultIntegrityError, ResultParseError, SessionError
+from mimiry.exceptions import MapError, ResultIntegrityError, ResultParseError, SessionError
 from mimiry.image import Image, normalize_image, preflight_python_version
 
 
@@ -84,6 +95,10 @@ class FunctionConfig:
     location: str | None = None
     environment_vars: dict[str, str] = field(default_factory=dict)
     name_prefix: str | None = None
+    # ``{"volume-name": "/mount/path"}``. A volume lives in one location; the
+    # session adopts it (or is refused before it exists if ``location``
+    # disagrees).
+    volumes: dict[str, str] = field(default_factory=dict)
 
 
 class Function:
@@ -107,16 +122,24 @@ class Function:
         return _run_remote(self._fn, self._cfg, args, kwargs)
 
     def map(self, iterable: Iterable[Any], *, kwargs_list: list[dict] | None = None) -> list:
-        """Sequentially apply the function across an iterable.
+        """Apply the function to every item on one GPU session and return the
+        results in order.
 
-        v1 limitation: Mimiry caps users at 2 concurrent sessions, so ``map`` runs
-        items one at a time. v2 backend changes will lift this.
+        The session is created once and each item is streamed through it, so
+        the cold start is paid once. Items run one after another on that
+        session. If an item's call raises inside the container, the exception
+        is collected and the rest still run; when any failed, :class:`MapError`
+        is raised at the end carrying every successful result and every
+        failure, so finished work is never thrown away.
         """
         items = list(iterable)
         kwargs_list = kwargs_list or [{} for _ in items]
         if len(kwargs_list) != len(items):
             raise ValueError("kwargs_list length must match iterable length")
-        return [_run_remote(self._fn, self._cfg, (item,), kw) for item, kw in zip(items, kwargs_list)]
+        if not items:
+            return []
+        calls = [((item,), kw) for item, kw in zip(items, kwargs_list, strict=True)]
+        return _run_map(self._fn, self._cfg, calls)
 
 
 def function(
@@ -134,18 +157,31 @@ def function(
     location: str | None = None,
     env: dict[str, str] | None = None,
     name: str | None = None,
+    volume: str | dict[str, str] | None = None,
 ) -> Callable[[Callable], Function]:
     """Decorator: turn a Python function into a Mimiry-remote callable.
 
+    ``volume`` attaches a persistent volume created with ``mimiry volume
+    create``: a name mounts it at ``/data``; a ``{name: path}`` mapping picks
+    the mount points. What the function writes there is still there for the
+    next call.
+
     Example::
 
-        @mimiry.function(gpu="A100", provider="verda", image="nvcr.io/nvidia/pytorch:24.01-py3")
+        @mimiry.function(gpu="A100", image="nvcr.io/nvidia/pytorch:24.01-py3", volume="ckpt")
         def train(dataset: str) -> dict:
             import torch
+            torch.save({"loss": 0.1}, "/data/last.pt")
             return {"loss": 0.1}
 
         train.remote("imagenet-small")
     """
+    if volume is None:
+        volumes: dict[str, str] = {}
+    elif isinstance(volume, str):
+        volumes = {volume: "/data"}
+    else:
+        volumes = dict(volume)
     cfg = FunctionConfig(
         gpu=gpu,
         gpu_count=gpu_count,
@@ -155,6 +191,7 @@ def function(
         location=location,
         environment_vars=env or {},
         name_prefix=name,
+        volumes=volumes,
     )
 
     def wrap(fn: Callable) -> Function:
@@ -183,49 +220,73 @@ def _build_session_payload(cfg: FunctionConfig, command: str, env_vars: dict[str
 
     merged_env = {**image.env_vars, **cfg.environment_vars, **env_vars}
 
-    return {
+    payload = {
         "name": _session_name(cfg.name_prefix or "mimiry-fn"),
         "image": {"uri": image.uri},
         "gpu": gpu_spec,
         "command": command,
         "environment_vars": merged_env,
-        # v1 requires SSH for result retrieval — see _ssh.py for the rationale.
+        # SSH is how the result comes back — see _ssh.py for the rationale.
         "ssh_enabled": True,
         "ssh_public_key": pub_key,
         "auto_terminate": {"mode": "on_complete"},
     }
+    if cfg.volumes:
+        payload["volume_mounts"] = [
+            {"volume_name": name, "mount_path": path} for name, path in cfg.volumes.items()
+        ]
+    return payload
 
 
-def _run_remote(fn: Callable, cfg: FunctionConfig, args: tuple, kwargs: dict) -> Any:
-    """Internal: do one end-to-end remote call."""
+@dataclass
+class _Attached:
+    """A live session with an open SSH control channel, ready for commands."""
+
+    session_id: str
+    target: SshTarget
+    terminal_check: Callable[[], str | None]
+    hmac_key: str
+    timeout: int
+
+
+def _log(msg: str) -> None:
+    if os.environ.get("MIMIRY_VERBOSE", "1") != "0":
+        print(f"[mimiry] {msg}", file=sys.stderr, flush=True)
+
+
+def _prepare(fn: Callable, cfg: FunctionConfig, *, worker: bool) -> tuple[dict, str, int, Any]:
+    """Everything that happens before a session exists: config, the Python
+    preflight, packing, and the session payload. Returns
+    ``(payload, hmac_key, timeout, config)``. Nothing here costs money.
+    """
     config = get_config()
     timeout = cfg.timeout_seconds or config.timeout_seconds
-
     if config.ssh_key_path is None:
         raise RuntimeError(
             "Mimiry SDK is not configured. Set MIMIRY_SSH_KEY or call mimiry.configure(...)."
         )
-
-    token = get_token(config.ssh_key_path, config.api_base)
     image = normalize_image(cfg.image)
     # Before anything is created or charged: a caller Python that the image's
     # declared Python can't load is a guaranteed crash on arrival.
     caller_py = caller_python_version()
     preflight_python_version(image, caller_py)
-    payload_b64 = pack_call(fn, args, kwargs)
     hmac_key = new_result_hmac_key()
-    command = build_bootstrap_script(image_install_prefix=image.install_prefix())
+    command = build_bootstrap_script(image_install_prefix=image.install_prefix(), worker=worker)
     env_vars = {
-        payload_env_var(): payload_b64,
         result_hmac_env_var(): hmac_key,
         # The container re-checks this against its own interpreter, so an
         # undeclared image still fails with an explanation rather than a
         # segfault the SDK would misreport as an SSH problem.
         caller_python_env_var(): caller_py,
     }
+    if worker:
+        env_vars[payload_env_var()] = pack_fn(fn)
+    return _build_session_payload(cfg, command, env_vars), hmac_key, timeout, config
 
-    session_payload = _build_session_payload(cfg, command, env_vars)
 
+def _attach(client: MimiryClient, cfg: FunctionConfig, payload: dict, hmac_key: str, timeout: int, config: Any) -> _Attached:
+    """Create the session and bring it to the point where SSH commands work.
+    Raises with the container's own diagnosis if it dies on the way."""
     run_config = type(config)(
         ssh_key_path=config.ssh_key_path,
         api_base=config.api_base,
@@ -233,96 +294,175 @@ def _run_remote(fn: Callable, cfg: FunctionConfig, args: tuple, kwargs: dict) ->
         poll_interval_seconds=config.poll_interval_seconds,
         log_poll_interval_seconds=config.log_poll_interval_seconds,
     )
+    # A volume lives in one location; settle that before the GPU check so the
+    # check runs against the location the session will really use.
+    location = preflight_volume_location(
+        client, payload.get("volume_mounts") or [], cfg.location
+    ) or cfg.location
+    if location:
+        payload["gpu"]["location"] = location
+    # Fail fast on an impossible gpu/provider combo before paying for a
+    # provisioning round-trip, and resolve a GPU family alias (e.g. "A100") to
+    # the concrete catalog names the API requires. Best-effort — a flaky
+    # availability endpoint won't block submission. See _availability.py.
+    payload["gpu"]["types"] = preflight_gpu_availability(client, cfg.gpu, cfg.provider, location)
 
-    verbose = os.environ.get("MIMIRY_VERBOSE", "1") != "0"
+    session = client.create_session(payload)
+    session_id = session["id"]
+    _log(f"session {session_id} submitted")
 
-    def _log(msg: str) -> None:
-        if verbose:
-            print(f"[mimiry] {msg}", file=sys.stderr, flush=True)
+    ran_payload, _ = wait_for_started_or_terminal(
+        client, session_id, run_config, on_state_change=lambda st: _log(f"state={st}")
+    )
+    # If the container ended before we could attach, surface its logs now
+    # instead of blundering into a 300s SSH timeout.
+    raise_if_ended_before_result(ran_payload, client=client)
+
+    _log("waiting for ssh.host to be populated")
+    ssh_ready = wait_for_ssh_ready(client, session_id, run_config)
+    raise_if_failed(ssh_ready, client=client)
+
+    target = ssh_target_from_session(ssh_ready, config.ssh_key_path)
+    _log(f"sshing into {target.host}:{target.port}")
+    terminal_check = make_terminal_check(client, session_id)
+    try:
+        wait_for_sshd(target, terminal_check=terminal_check)
+    except SSHError:
+        # If the box is gone because the container died, the container's
+        # own logs say why — a transport error would send the user
+        # debugging their network instead.
+        raise_if_ended_before_result(client.get_session(session_id), client=client)
+        raise
+
+    _log("opening SSH control channel (multiplexing for the bootstrap install storm)")
+    target = open_control_channel(target)
+    return _Attached(session_id, target, terminal_check, hmac_key, timeout)
+
+
+def _release(client: MimiryClient, att: _Attached | None, session_id: str | None) -> None:
+    """Best-effort teardown: tell the container we are done, close the
+    channel, terminate anything still alive. Never raises."""
+    if att is not None:
+        try:
+            signal_done(att.target)
+        except Exception as e:
+            _log(f"warning: signal_done failed ({e}); container will time out on its own")
+        close_control_channel(att.target)
+    if session_id is None:
+        return
+    try:
+        state = (client.get_session(session_id).get("state") or "").lower()
+        if state not in TERMINAL_STATES:
+            client.terminate_session(session_id)
+    except Exception:
+        pass
+
+
+def _decode(raw: str, hmac_key: str, session_id: str) -> Any:
+    """Verify the result's HMAC, then deserialize. A remote exception is
+    re-raised here as :class:`RemoteFunctionError`."""
+    try:
+        return parse_result(verify_result_envelope(raw, hmac_key))
+    except ResultIntegrityError as e:
+        raise ResultIntegrityError(f"{e} (session {session_id})") from e
+    except ResultParseError as e:
+        raise ResultParseError(f"{e} (session {session_id})") from e
+
+
+def _run_remote(fn: Callable, cfg: FunctionConfig, args: tuple, kwargs: dict) -> Any:
+    """Internal: do one end-to-end remote call on a fresh session."""
+    payload, hmac_key, timeout, config = _prepare(fn, cfg, worker=False)
+    payload["environment_vars"][payload_env_var()] = pack_call(fn, args, kwargs)
+    token = get_token(config.ssh_key_path, config.api_base)
 
     with MimiryClient(token) as client:
-        # Fail fast on an impossible gpu/provider combo before paying for a
-        # provisioning round-trip, and resolve a GPU family alias (e.g. "A100") to
-        # the concrete catalog name the API requires. Best-effort — a flaky
-        # availability endpoint won't block submission. See _availability.py.
-        resolved_gpu = preflight_gpu_availability(client, cfg.gpu, cfg.provider, cfg.location)
-        session_payload["gpu"]["types"] = resolved_gpu
-
-        session = client.create_session(session_payload)
-        session_id = session["id"]
-        _log(f"session {session_id} submitted")
-
+        att: _Attached | None = None
+        session_id: str | None = None
         try:
-            ran_payload, _ = wait_for_started_or_terminal(
-                client, session_id, run_config, on_state_change=lambda s: _log(f"state={s}")
+            att = _attach(client, cfg, payload, hmac_key, timeout, config)
+            session_id = att.session_id
+            _log(f"waiting for {RESULT_FILE}")
+            wait_for_remote_file(
+                att.target, RESULT_FILE, max_wait_seconds=timeout, terminal_check=att.terminal_check
             )
-            # If the container ended before we could attach, surface its logs now
-            # instead of blundering into a 300s SSH timeout.
-            raise_if_ended_before_result(ran_payload, client=client)
-
-            _log("waiting for ssh.host to be populated")
-            ssh_ready = wait_for_ssh_ready(client, session_id, run_config)
-            raise_if_failed(ssh_ready, client=client)
-
-            target = ssh_target_from_session(ssh_ready, config.ssh_key_path)
-            _log(f"sshing into {target.host}:{target.port}")
-            terminal_check = make_terminal_check(client, session_id)
-            try:
-                wait_for_sshd(target, terminal_check=terminal_check)
-            except SSHError:
-                # If the box is gone because the container died, the container's
-                # own logs say why — a transport error would send the user
-                # debugging their network instead.
-                raise_if_ended_before_result(client.get_session(session_id), client=client)
-                raise
-
-            _log("opening SSH control channel (multiplexing for the bootstrap install storm)")
-            target = open_control_channel(target)
-
-            try:
-                _log(f"waiting for {RESULT_FILE}")
-                wait_for_remote_file(
-                    target,
-                    RESULT_FILE,
-                    max_wait_seconds=timeout,
-                    terminal_check=terminal_check,
-                )
-
-                _log("fetching result")
-                raw = fetch_remote_file(target, RESULT_FILE).decode("utf-8", errors="replace")
-
-                _log("signalling done")
-                try:
-                    signal_done(target)
-                except Exception as e:
-                    # Result already in hand — don't fail the call over this.
-                    _log(f"warning: signal_done failed ({e}); container will time out on its own")
-            finally:
-                close_control_channel(target)
-
-            try:
-                # Verify the result's HMAC before deserializing.
-                verified_b64 = verify_result_envelope(raw, hmac_key)
-                return parse_result(verified_b64)
-            except ResultIntegrityError as e:
-                raise ResultIntegrityError(f"{e} (session {session_id})") from e
-            except ResultParseError as e:
-                raise ResultParseError(f"{e} (session {session_id})") from e
+            _log("fetching result")
+            raw = fetch_remote_file(att.target, RESULT_FILE).decode("utf-8", errors="replace")
+            return _decode(raw, hmac_key, session_id)
         except Exception:
-            # Pull events for the failure narrative.
-            try:
-                final = client.get_session(session_id, events_tail=-1)
-                _log(f"final session payload: state={final.get('state')} stop_reason={final.get('stop_reason')} error={final.get('error')}")
-            except Exception:
-                pass
+            _narrate_failure(client, session_id)
             raise
         finally:
-            state = (client.get_session(session_id).get("state") or "").lower()
-            if state not in TERMINAL_STATES:
+            _release(client, att, session_id)
+
+
+def _run_map(fn: Callable, cfg: FunctionConfig, calls: list[tuple[tuple, dict]]) -> list:
+    """Internal: one session, every call streamed through it in order."""
+    payload, hmac_key, timeout, config = _prepare(fn, cfg, worker=True)
+    token = get_token(config.ssh_key_path, config.api_base)
+
+    results: list[Any] = []
+    failures: list[tuple[int, BaseException]] = []
+    with MimiryClient(token) as client:
+        att: _Attached | None = None
+        session_id: str | None = None
+        try:
+            att = _attach(client, cfg, payload, hmac_key, timeout, config)
+            session_id = att.session_id
+            for n, (args, kwargs) in enumerate(calls):
+                _log(f"map: item {n + 1}/{len(calls)}")
+                push_remote_file(att.target, f"{CALLS_DIR}/{n}.b64", pack_args(args, kwargs))
+                result_path = f"{RESULTS_DIR}/{n}.b64"
+                wait_for_remote_file(
+                    att.target,
+                    result_path,
+                    max_wait_seconds=timeout,
+                    poll_interval=1.0,
+                    terminal_check=att.terminal_check,
+                )
+                raw = fetch_remote_file(att.target, result_path).decode("utf-8", errors="replace")
                 try:
-                    client.terminate_session(session_id)
-                except Exception:
-                    pass
+                    results.append(_decode(raw, hmac_key, session_id))
+                except RemoteFunctionError as e:
+                    # The container is still up and the next item will run;
+                    # keep the failure and carry on.
+                    results.append(None)
+                    failures.append((n, e))
+        except Exception as e:
+            # The session itself is gone (capacity, container death, SSH). Do
+            # not discard what already came back.
+            _narrate_failure(client, session_id)
+            if results:
+                raise MapError(
+                    f"map stopped after {len(results)} of {len(calls)} items: {e}",
+                    results=results,
+                    failures=failures + [(len(results), e)],
+                    total=len(calls),
+                ) from e
+            raise
+        finally:
+            _release(client, att, session_id)
+
+    if failures:
+        raise MapError(
+            f"{len(failures)} of {len(calls)} map items raised inside the container",
+            results=results,
+            failures=failures,
+            total=len(calls),
+        )
+    return results
 
 
-__all__ = ["function", "Function", "FunctionConfig", "SessionError"]
+def _narrate_failure(client: MimiryClient, session_id: str | None) -> None:
+    if session_id is None:
+        return
+    try:
+        final = client.get_session(session_id, events_tail=-1)
+        _log(
+            f"final session payload: state={final.get('state')} "
+            f"stop_reason={final.get('stop_reason')} error={final.get('error')}"
+        )
+    except Exception:
+        pass
+
+
+__all__ = ["Function", "FunctionConfig", "MapError", "SessionError", "function"]
