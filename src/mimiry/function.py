@@ -125,7 +125,12 @@ class Function:
     def remote(self, *args: Any, **kwargs: Any) -> Any:
         """Run the function on a Mimiry GPU session. Blocks until done. Returns
         the value. ``self.last_run`` afterwards says what it cost."""
-        result, self.last_run = _run_remote(self._fn, self._cfg, args, kwargs)
+        try:
+            result, self.last_run = _run_remote(self._fn, self._cfg, args, kwargs)
+        except SessionError as e:
+            # A failed call still cost a session; leave its figures reachable.
+            self.last_run = getattr(e, "run", None)
+            raise
         return result
 
     def map(self, iterable: Iterable[Any], *, kwargs_list: list[dict] | None = None) -> list:
@@ -298,9 +303,20 @@ def _prepare(fn: Callable, cfg: FunctionConfig, *, worker: bool) -> tuple[dict, 
     return _build_session_payload(cfg, command, env_vars), hmac_key, timeout, config
 
 
-def _attach(client: MimiryClient, cfg: FunctionConfig, payload: dict, hmac_key: str, timeout: int, config: Any) -> _Attached:
+def _attach(
+    client: MimiryClient,
+    cfg: FunctionConfig,
+    payload: dict,
+    hmac_key: str,
+    timeout: int,
+    config: Any,
+    created: dict | None = None,
+) -> _Attached:
     """Create the session and bring it to the point where SSH commands work.
-    Raises with the container's own diagnosis if it dies on the way."""
+    Raises with the container's own diagnosis if it dies on the way.
+    ``created``, if given, receives ``{"id": ..., "started_at": ...}`` as soon
+    as the session exists, so a caller can still account for it when the
+    attach fails afterwards."""
     run_config = type(config)(
         ssh_key_path=config.ssh_key_path,
         api_base=config.api_base,
@@ -324,6 +340,9 @@ def _attach(client: MimiryClient, cfg: FunctionConfig, payload: dict, hmac_key: 
     started_at = time.monotonic()
     session = client.create_session(payload)
     session_id = session["id"]
+    if created is not None:
+        created["id"] = session_id
+        created["started_at"] = started_at
     _log(f"session {session_id} submitted")
 
     ran_payload, phases = wait_for_started_or_terminal(
@@ -354,7 +373,12 @@ def _attach(client: MimiryClient, cfg: FunctionConfig, payload: dict, hmac_key: 
     return _Attached(session_id, target, terminal_check, hmac_key, timeout, started_at, phases)
 
 
-def _release(client: MimiryClient, att: _Attached | None, session_id: str | None) -> RunInfo | None:
+def _release(
+    client: MimiryClient,
+    att: _Attached | None,
+    session_id: str | None,
+    started_at: float | None = None,
+) -> RunInfo | None:
     """Best-effort teardown: tell the container we are done, close the
     channel, terminate anything still alive, then read what it cost. Never
     raises; returns ``None`` only when no session was ever created."""
@@ -376,7 +400,7 @@ def _release(client: MimiryClient, att: _Attached | None, session_id: str | None
         client,
         session_id,
         phases=att.phases if att is not None else {},
-        started_at=att.started_at if att is not None else time.monotonic(),
+        started_at=att.started_at if att is not None else (started_at or time.monotonic()),
     )
 
 
@@ -400,9 +424,10 @@ def _run_remote(fn: Callable, cfg: FunctionConfig, args: tuple, kwargs: dict) ->
 
     with MimiryClient(token) as client:
         att: _Attached | None = None
+        created: dict = {}
         session_id: str | None = None
         try:
-            att = _attach(client, cfg, payload, hmac_key, timeout, config)
+            att = _attach(client, cfg, payload, hmac_key, timeout, config, created)
             session_id = att.session_id
             _log(f"waiting for {RESULT_FILE}")
             wait_for_remote_file(
@@ -411,12 +436,20 @@ def _run_remote(fn: Callable, cfg: FunctionConfig, args: tuple, kwargs: dict) ->
             _log("fetching result")
             raw = fetch_remote_file(att.target, RESULT_FILE).decode("utf-8", errors="replace")
             result = _decode(raw, hmac_key, session_id)
-        except Exception:
+        except Exception as e:
+            session_id = session_id or created.get("id")
             _narrate_failure(client, session_id)
+            info = _release(client, att, session_id, created.get("started_at"))
+            att = None
+            session_id = None
+            _log_cost(info)
+            if isinstance(e, SessionError):
+                e.run = info
             raise
         finally:
-            info = _release(client, att, session_id)
-            _log_cost(info)
+            if session_id is not None:
+                info = _release(client, att, session_id)
+                _log_cost(info)
         return result, info
 
 
@@ -430,9 +463,10 @@ def _run_map(fn: Callable, cfg: FunctionConfig, calls: list[tuple[tuple, dict]])
     failures: list[tuple[int, BaseException]] = []
     with MimiryClient(token) as client:
         att: _Attached | None = None
+        created: dict = {}
         session_id: str | None = None
         try:
-            att = _attach(client, cfg, payload, hmac_key, timeout, config)
+            att = _attach(client, cfg, payload, hmac_key, timeout, config, created)
             session_id = att.session_id
             for n, (args, kwargs) in enumerate(calls):
                 _log(f"map: item {n + 1}/{len(calls)}")
@@ -456,11 +490,14 @@ def _run_map(fn: Callable, cfg: FunctionConfig, calls: list[tuple[tuple, dict]])
         except Exception as e:
             # The session itself is gone (capacity, container death, SSH). Do
             # not discard what already came back.
+            session_id = session_id or created.get("id")
             _narrate_failure(client, session_id)
-            info = _release(client, att, session_id)
+            info = _release(client, att, session_id, created.get("started_at"))
             att = None
             session_id = None
             _log_cost(info)
+            if isinstance(e, SessionError):
+                e.run = info
             if results:
                 raise MapError(
                     f"map stopped after {len(results)} of {len(calls)} items: {e}",

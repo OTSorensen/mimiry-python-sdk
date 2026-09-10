@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Callable
 
 from mimiry._client import MimiryClient
 from mimiry._config import Config
@@ -331,7 +331,7 @@ def raise_if_ended_before_result(
 
 
 def preflight_volume_location(
-    client: Any, mounts: list, requested_location: str | None
+    client: MimiryClient, mounts: list, requested_location: str | None
 ) -> str | None:
     """Reconcile the session's location with the locations of the volumes it
     mounts, returning the location to use (or ``None`` to leave it as-is).

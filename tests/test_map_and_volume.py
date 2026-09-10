@@ -176,7 +176,9 @@ def test_map_uses_one_session_for_every_item(wire):
     assert info.session_id == "sess-1" and info.final_cost == 0.308 and info.gpu_type == "A100_80G_SXM"
     assert len(platform.created) == 1, "one session, not one per item"
     assert container.done, "the container was released"
-    assert platform.terminated == ["sess-1"] or platform.terminated == []
+    # The fake platform stays "running" after release, so the SDK must
+    # terminate what auto_terminate did not.
+    assert platform.terminated == ["sess-1"]
 
 
 def test_public_map_goes_through_the_single_session_path(wire):
@@ -198,9 +200,11 @@ def test_map_ships_the_function_once_and_arguments_per_call(wire):
     fn = cloudpickle.loads(base64.b64decode(env["MIMIRY_FN_PAYLOAD_B64"]))
     assert callable(fn) and not isinstance(fn, tuple), "worker mode carries fn alone"
     assert f"{ssh_mod.CALLS_DIR}/0.b64" in container.fs
-    assert "worker" not in platform.created[0]["command"] or True  # command is opaque
-    # The bootstrap that ran is the worker one: it must reference the calls dir.
-    assert base64.b64decode(platform.created[0]["command"].split("echo ")[1].split(" |")[0]).decode().count(ssh_mod.CALLS_DIR)
+    # The bootstrap that ran is the worker one: it polls the calls dir and
+    # never writes the single-call result file.
+    bootstrap = base64.b64decode(platform.created[0]["command"].split("echo ")[1].split(" |")[0]).decode()
+    assert ssh_mod.CALLS_DIR in bootstrap
+    assert f'"{ssh_mod.RESULT_FILE}"' not in bootstrap
 
 
 def test_map_keeps_finished_results_when_an_item_raises(wire):
@@ -288,6 +292,18 @@ def test_public_remote_records_last_run(wire):
     assert fn.last_run.session_id == "sess-1"
     assert fn.last_run.final_cost == 0.308
     assert fn.last_run.duration is not None
+
+
+def test_remote_records_last_run_even_when_the_call_raises(wire):
+    import mimiry
+
+    platform, _ = wire(_square, die_after_calls=0)
+    fn = mimiry.function()(_square)
+    with pytest.raises(SessionError):
+        fn.remote(3)
+    assert fn.last_run is not None and fn.last_run.session_id == "sess-1", (
+        "a failed call still cost a session; the user must be able to see it"
+    )
 
 
 def test_volume_reaches_the_payload_and_sets_the_location(wire):
