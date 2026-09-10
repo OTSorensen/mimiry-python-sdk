@@ -100,6 +100,10 @@ def dead_session(monkeypatch, tmp_path):
 
     monkeypatch.setattr(ssh_mod.time, "sleep", _sleep)
     monkeypatch.setattr(ssh_mod.time, "monotonic", lambda: clock["t"])
+    import mimiry._session as session_mod
+
+    monkeypatch.setattr(session_mod.time, "sleep", _sleep)
+    monkeypatch.setattr(session_mod.time, "monotonic", lambda: clock["t"])
     return client
 
 
@@ -117,11 +121,12 @@ def test_dead_container_is_diagnosed_as_a_container_failure(dead_session):
 
 
 def test_dead_container_does_not_wait_out_the_ssh_timeout(dead_session):
-    # Fewer polls than the 300 s / 3 s retry loop would make: the wait ended
-    # as soon as the session reported a terminal state.
+    # The fake clock advances only in sleep(); the 300 s SSH budget with a 3 s
+    # retry sleep would leave it near 300. The wait ended on the first poll
+    # that saw a terminal state, so only a few seconds elapsed on the SSH side.
     with pytest.raises(SessionFailed):
         _run_remote(_square, FunctionConfig(gpu="H100_80G_SXM"), (7,), {})
-    assert dead_session.get_calls < 10
+    assert ssh_mod.time.monotonic() < 30, "the SSH wait ended early"
 
 
 def test_a_mismatched_image_never_creates_a_session(dead_session):

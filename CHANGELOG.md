@@ -4,7 +4,31 @@ All notable changes to the `mimiry` SDK are documented here. This project
 roughly follows [Keep a Changelog](https://keepachangelog.com/) and
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.4.0] — 2026-09-09
+
+Every change below was verified against the live alpha platform on the
+release date; the evidence is in `mimiry-alpha/bug-reports/*_2026-09-09.md`.
+
+### Added
+- **`.map()` runs every item on one session.** The function ships once; each
+  item's arguments are pushed over the SSH channel and its result comes back
+  the same way, so the five-to-eight-minute cold start is paid once instead
+  of per item. An item that raises inside the container no longer aborts the
+  rest: `MapError` is raised at the end with `results` (`None` at the failed
+  index) and `failures`. A session that dies part-way raises the same error
+  carrying everything that had finished, so paid work is never thrown away.
+- **`@mimiry.function(volume=...)`.** A volume name mounts at `/data`; a
+  `{name: path}` mapping picks mount points. The session adopts the volume's
+  location, and a conflicting `location=` is refused before anything exists —
+  the same preflight the CLI's `--volume` already had.
+- **Every call reports what it cost.** `Function.last_run` (after
+  `.remote()` / `.map()`), `RunResult.info` (from `mimiry.run`) and
+  `MapError.run` carry a `RunInfo`: session id, GPU type, provider, hourly
+  rate, seconds to each state, wall-clock duration, and the platform's
+  settled `final_cost`. The SDK also logs one line per session with the
+  cost at release. Before this, every number had to be reconstructed from
+  `session logs --timestamps` and `transactions` afterwards.
+- `MapError`, `RemoteFunctionError` and `RunInfo` are exported from `mimiry`.
 
 ### Fixed
 - **`@mimiry.function()` and `mimiry.run()` default to a job that can run.**

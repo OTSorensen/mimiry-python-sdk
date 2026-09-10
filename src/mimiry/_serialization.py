@@ -27,6 +27,15 @@ Results are returned out-of-band. The container:
 
 If the bootstrap can't decode the payload (e.g. a failed cloudpickle install),
 it writes a message to ``/tmp/mimiry_bootstrap_error`` for the SDK to surface.
+
+# Worker mode (``.map()``)
+
+One session, many calls. The payload env var carries only ``fn``. The
+container then loops: for ``n = 0, 1, 2, ...`` it waits for
+``/tmp/mimiry_calls/<n>.b64`` (a base64 cloudpickle of ``(args, kwargs)``,
+pushed by the SDK over SSH), runs the call, and writes the signed envelope to
+``/tmp/mimiry_results/<n>.b64``. It exits on the done flag, or when no new
+call has arrived within the hold timeout. Cold start is paid once.
 """
 
 from __future__ import annotations
@@ -41,7 +50,14 @@ import warnings
 
 import cloudpickle
 
-from mimiry._ssh import CONTAINER_HOLD_TIMEOUT_SECONDS, DONE_FLAG, ERROR_FILE, RESULT_FILE
+from mimiry._ssh import (
+    CALLS_DIR,
+    CONTAINER_HOLD_TIMEOUT_SECONDS,
+    DONE_FLAG,
+    ERROR_FILE,
+    RESULT_FILE,
+    RESULTS_DIR,
+)
 from mimiry.exceptions import ResultIntegrityError, ResultParseError
 
 _PAYLOAD_ENV = "MIMIRY_FN_PAYLOAD_B64"
@@ -78,12 +94,101 @@ def pack_call(fn, args: tuple, kwargs: dict) -> str:
     return encoded
 
 
-def build_bootstrap_script(image_install_prefix: str = "") -> str:
+
+# The single-call tail: unpickle (fn, args, kwargs), run once, hold for done.
+_SINGLE_CALL_BODY = """
+        try:
+            fn, args, kwargs = cloudpickle.loads(base64.b64decode(_b64))
+        except Exception:
+            _write_error("failed to unpickle payload:\\n" + traceback.format_exc())
+            sys.exit(3)
+
+        _write_envelope(_call(fn, args, kwargs), "{RESULT_FILE}")
+
+        # Block until the SDK signals done, or a hard timeout passes (bounds runaway cost).
+        _deadline = time.time() + {CONTAINER_HOLD_TIMEOUT_SECONDS}
+        while time.time() < _deadline:
+            if os.path.exists("{DONE_FLAG}"):
+                break
+            time.sleep(1)
+"""
+
+# The worker tail: unpickle fn once, then answer numbered call files in order
+# until the done flag appears or the SDK goes quiet for the hold timeout.
+_WORKER_BODY = """
+        try:
+            fn = cloudpickle.loads(base64.b64decode(_b64))
+        except Exception:
+            _write_error("failed to unpickle function:\\n" + traceback.format_exc())
+            sys.exit(3)
+
+        os.makedirs("{CALLS_DIR}", exist_ok=True)
+        os.makedirs("{RESULTS_DIR}", exist_ok=True)
+        _n = 0
+        _deadline = time.time() + {CONTAINER_HOLD_TIMEOUT_SECONDS}
+        while time.time() < _deadline:
+            if os.path.exists("{DONE_FLAG}"):
+                break
+            _cp = "{CALLS_DIR}/%d.b64" % _n
+            if not os.path.exists(_cp):
+                time.sleep(0.5)
+                continue
+            with open(_cp) as f:
+                _cb64 = f.read()
+            try:
+                args, kwargs = cloudpickle.loads(base64.b64decode(_cb64))
+                payload = _call(fn, args, kwargs)
+            except Exception:
+                payload = {{
+                    "ok": False,
+                    "error": {{
+                        "type": "CallDecodeError",
+                        "message": "failed to unpickle call %d" % _n,
+                        "traceback": traceback.format_exc(),
+                    }},
+                }}
+            _write_envelope(payload, "{RESULTS_DIR}/%d.b64" % _n)
+            _n += 1
+            _deadline = time.time() + {CONTAINER_HOLD_TIMEOUT_SECONDS}
+"""
+
+
+def pack_fn(fn) -> str:
+    """Cloudpickle just ``fn`` for worker mode; the arguments travel per call."""
+    return base64.b64encode(cloudpickle.dumps(fn)).decode("ascii")
+
+
+def pack_args(args: tuple, kwargs: dict) -> bytes:
+    """One worker-mode call: base64 cloudpickle of ``(args, kwargs)``, as the
+    bytes the SDK pushes to ``CALLS_DIR/<n>.b64``. Same size warning as
+    :func:`pack_call`, for the same reason — each call file still has to
+    cross the SSH channel.
+    """
+    encoded = base64.b64encode(cloudpickle.dumps((args, kwargs)))
+    if len(encoded) > PAYLOAD_SOFT_LIMIT_BYTES:
+        warnings.warn(
+            f"mimiry: call arguments are {len(encoded) // 1024} KB, over the "
+            f"{PAYLOAD_SOFT_LIMIT_BYTES // 1024} KB soft limit. Put big data on a "
+            f"mounted volume or a bucket and pass a path/URL instead.",
+            stacklevel=3,
+        )
+    return encoded
+
+
+def build_bootstrap_script(image_install_prefix: str = "", *, worker: bool = False) -> str:
     """Return the shell command the container executes.
 
     ``image_install_prefix`` (from :class:`mimiry.image.Image`) is run BEFORE
-    the Python bootstrap so that pip/apt deps land first.
+    the Python bootstrap so that pip/apt deps land first. ``worker`` selects
+    the many-calls loop described in the module docstring.
     """
+    py_run = (_WORKER_BODY if worker else _SINGLE_CALL_BODY).format(
+        RESULT_FILE=RESULT_FILE,
+        DONE_FLAG=DONE_FLAG,
+        CALLS_DIR=CALLS_DIR,
+        RESULTS_DIR=RESULTS_DIR,
+        CONTAINER_HOLD_TIMEOUT_SECONDS=CONTAINER_HOLD_TIMEOUT_SECONDS,
+    )
     py_bootstrap = textwrap.dedent(
         f'''
         import base64, hashlib, hmac, os, subprocess, sys, time, traceback
@@ -146,57 +251,45 @@ def build_bootstrap_script(image_install_prefix: str = "") -> str:
             )
             sys.exit(5)
 
-        try:
-            fn, args, kwargs = cloudpickle.loads(base64.b64decode(_b64))
-        except Exception:
-            _write_error("failed to unpickle payload:\\n" + traceback.format_exc())
-            sys.exit(3)
+        _hmac_key = os.environ.get("{_RESULT_HMAC_ENV}", "").encode("ascii")
 
-        try:
-            result = fn(*args, **kwargs)
-            payload = {{"ok": True, "result": result}}
-        except BaseException as exc:
-            payload = {{
-                "ok": False,
-                "error": {{
-                    "type": type(exc).__name__,
-                    "message": str(exc),
-                    "traceback": traceback.format_exc(),
-                }},
-            }}
-
-        try:
-            wire = base64.b64encode(cloudpickle.dumps(payload)).decode("ascii")
-        except Exception:
-            wire = base64.b64encode(
-                cloudpickle.dumps({{
+        def _call(fn, args, kwargs):
+            try:
+                return {{"ok": True, "result": fn(*args, **kwargs)}}
+            except BaseException as exc:
+                return {{
                     "ok": False,
                     "error": {{
-                        "type": "ResultSerializationError",
-                        "message": "return value was not cloudpickle-serializable",
+                        "type": type(exc).__name__,
+                        "message": str(exc),
                         "traceback": traceback.format_exc(),
                     }},
-                }})
-            ).decode("ascii")
+                }}
 
-        # Sign the result with the per-call key so the SDK can verify it
-        # before deserializing.
-        _hmac_key = os.environ.get("{_RESULT_HMAC_ENV}", "").encode("ascii")
-        _sig = hmac.new(_hmac_key, wire.encode("ascii"), hashlib.sha256).hexdigest()
-        _envelope = _sig + "\\n" + wire
+        def _write_envelope(payload, path):
+            try:
+                wire = base64.b64encode(cloudpickle.dumps(payload)).decode("ascii")
+            except Exception:
+                wire = base64.b64encode(
+                    cloudpickle.dumps({{
+                        "ok": False,
+                        "error": {{
+                            "type": "ResultSerializationError",
+                            "message": "return value was not cloudpickle-serializable",
+                            "traceback": traceback.format_exc(),
+                        }},
+                    }})
+                ).decode("ascii")
+            # Sign the result with the per-session key so the SDK can verify
+            # it before deserializing.
+            _sig = hmac.new(_hmac_key, wire.encode("ascii"), hashlib.sha256).hexdigest()
+            # Write atomically: rename(tmp, final) so an SSH poller never sees
+            # a partial file.
+            with open(path + ".partial", "w") as f:
+                f.write(_sig + "\\n" + wire)
+            os.replace(path + ".partial", path)
 
-        # Write atomically: rename(tmp, final) so an SSH poller never sees a partial file.
-        _tmp = "{RESULT_FILE}.partial"
-        with open(_tmp, "w") as f:
-            f.write(_envelope)
-        os.replace(_tmp, "{RESULT_FILE}")
-
-        # Block until the SDK signals done, or a hard timeout passes (bounds runaway cost).
-        _deadline = time.time() + {CONTAINER_HOLD_TIMEOUT_SECONDS}
-        while time.time() < _deadline:
-            if os.path.exists("{DONE_FLAG}"):
-                break
-            time.sleep(1)
+{py_run}
         '''
     ).strip()
 
