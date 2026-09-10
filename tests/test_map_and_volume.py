@@ -306,6 +306,37 @@ def test_remote_records_last_run_even_when_the_call_raises(wire):
     )
 
 
+def test_map_that_never_started_still_reports_its_session(wire):
+    import mimiry
+
+    platform, _ = wire(_square, die_after_calls=0)
+    fn = mimiry.function()(_square)
+    with pytest.raises(SessionError) as exc:
+        fn.map([2])
+    assert exc.value.run is not None and exc.value.run.session_id == "sess-1"
+    assert fn.last_run is not None and fn.last_run.session_id == "sess-1"
+
+
+def test_a_live_session_is_terminated_when_the_attach_fails(wire, monkeypatch):
+    # The session exists and is running, but the SSH step blows up. The SDK
+    # must not walk away from a paid, running machine.
+    platform, _ = wire(_square)
+    monkeypatch.setattr(
+        function_mod, "wait_for_sshd", lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("no route"))
+    )
+    with pytest.raises(RuntimeError):
+        _run_remote(_square, FunctionConfig(), (2,), {})
+    assert platform.terminated == ["sess-1"], "attach failed on a live session: terminate it"
+
+    platform2, _ = wire(_square)
+    monkeypatch.setattr(
+        function_mod, "wait_for_sshd", lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("no route"))
+    )
+    with pytest.raises(RuntimeError):
+        _run_map(_square, FunctionConfig(), [((2,), {})])
+    assert platform2.terminated == ["sess-1"]
+
+
 def test_volume_reaches_the_payload_and_sets_the_location(wire):
     platform, _ = wire(_square, volumes=[{"name": "ckpt", "location": "FIN-02"}])
     cfg = FunctionConfig(volumes={"ckpt": "/data"})

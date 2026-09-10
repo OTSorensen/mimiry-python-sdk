@@ -153,8 +153,8 @@ class Function:
         calls = [((item,), kw) for item, kw in zip(items, kwargs_list, strict=True)]
         try:
             results, self.last_run = _run_map(self._fn, self._cfg, calls)
-        except MapError as e:
-            self.last_run = e.run
+        except SessionError as e:  # MapError included
+            self.last_run = getattr(e, "run", None)
             raise
         return results
 
