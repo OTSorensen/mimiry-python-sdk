@@ -143,14 +143,20 @@ says.
 
 ### 6. Tag it
 
+Tag the commit the clone in step 2 was built from, not whatever your
+working checkout happens to be on:
+
 ```bash
+cd /tmp/mimiry-release
+BUILT=$(git rev-parse HEAD)
 cd ~/projects/mimiry-python-sdk
-git tag -a v<version> -m "mimiry <version>"
+git fetch origin
+git tag -a v<version> -m "mimiry <version>" "$BUILT"
 git -c core.hooksPath=/dev/null push origin v<version>
 ```
 
 The tag is how a future reader finds the exact commit a PyPI version was
-built from. The `-c core.hooksPath=/dev/null` skips the pre-push review
+built from, so it must point at that commit. The `-c core.hooksPath=/dev/null` skips the pre-push review
 gate for this one push: a tag carries no diff and no ticket, so the gate
 refuses it, and the commit it points at has already been reviewed on its
 way into `main`. Never use that bypass for anything with a diff.
@@ -160,7 +166,7 @@ way into `main`. Never use that bypass for anything with a diff.
 | Message | Meaning | What to do |
 |---|---|---|
 | `403 Forbidden` | PyPI read the token and refused this upload | Check the token's **scope** (must be `Project: mimiry` or `Entire account`) and that the token's account is an Owner/Maintainer of the project. Mint a new one if in doubt; old tokens cannot be edited. |
-| `401 Unauthorized` / `Invalid or non-existent authentication information` | Token not recognised at all | Usually a paste error (missing first character, trailing space). Re-run step 4. Also check the username is exactly `__token__`. |
+| `403 Forbidden` with `Invalid or non-existent authentication information` | Token not recognised at all (PyPI sends this as 403, not 401) | Usually a paste error (missing first character, trailing space) or the token's label pasted instead of its value. Re-run step 4. Also check the username is exactly `__token__`. |
 | `400 File already exists` | This version is already on PyPI | PyPI never accepts the same version twice, even if the file differs. Bump the version, rebuild, upload again. There is no overwriting. |
 | `twine check` fails | Metadata PyPI would reject or misrender | Read the message; it names the field. Fix `pyproject.toml` or `README.md`, commit, rebuild. |
 | Upload succeeded but `pip install --upgrade` still gives the old version | PyPI's CDN has not caught up | Wait a minute and retry. If it persists past ten minutes, check https://pypi.org/project/mimiry/#history for the new version. |

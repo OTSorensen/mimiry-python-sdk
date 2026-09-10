@@ -12,20 +12,23 @@ because a tag carries no diff. None of that is knowledge the repo held.
 ## Goal
 
 Anyone with a PyPI token that can upload `mimiry` can cut a release from a
-clean clone by reading one file, and the public author contact on PyPI is
-the company address.
+clean clone by reading one file. The author contact in the package metadata
+is the company address, so the next uploaded version shows it on PyPI
+(0.4.0, already published, still shows the old one).
 
 ## Acceptance criteria
 
 1. `docs/releasing.md` exists and covers: what each tool and word means,
    how to obtain a correctly scoped token, build from a fresh clone, check
    the distribution, upload with the token entered via `read -rs` so it
-   never reaches shell history, verify from an outside venv, and tag.
+   never reaches shell history, verify from an outside venv, and tag the
+   commit the release clone was built from.
 2. The tag step states that the review-gate hook must be bypassed for the
    tag push and why, and that the bypass is never used for a push with a
    diff.
-3. `docs/releasing.md` maps `403`, `401`, and "file already exists" to
-   their causes and the action for each.
+3. `docs/releasing.md` maps the two `403` cases (wrong scope or account;
+   unrecognised token, which PyPI also sends as 403) and "file already
+   exists" to their causes and the action for each.
 4. `pyproject.toml` `authors` carries `oliver.thor@mimiry.com`.
 
 ## Non-goals
