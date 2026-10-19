@@ -4,6 +4,18 @@ All notable changes to the `mimiry` SDK are documented here. This project
 roughly follows [Keep a Changelog](https://keepachangelog.com/) and
 [Semantic Versioning](https://semver.org/).
 
+## [0.4.1] — unreleased
+
+### Fixed
+- **A fresh install talks to the live environment.** The default API base is now
+  `https://beta.mimiry.com`; 0.4.0 still defaulted to `alpha.mimiry.com`, so a user who
+  registered a key on beta got "SSH signature verification failed" from every command until
+  they set `MIMIRY_API_BASE`. An explicit `--api-base`, `MIMIRY_API_BASE` or the saved config
+  file still wins.
+- **No provider names in help text or examples.** `--provider` help, the CLI module examples,
+  `mimiry.run` docstring and the README no longer name a provider; provider names are withheld
+  from users.
+
 ## [0.4.0] — 2026-09-09
 
 Every change below was verified against the live alpha platform on the

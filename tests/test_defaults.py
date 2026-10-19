@@ -8,9 +8,11 @@ failed session.
 from __future__ import annotations
 
 import inspect
+import subprocess
 import sys
 
 import mimiry
+from mimiry import _config
 
 # ``mimiry.function`` and ``mimiry.run`` are shadowed by the callables the
 # package exports under the same names; reach the modules via sys.modules.
@@ -46,3 +48,26 @@ def test_docstring_examples_do_not_name_a_provider_that_does_not_exist():
         assert doc
         assert "gcp" not in doc
         assert 'gpu="T4"' not in doc
+
+
+def test_default_api_base_is_the_live_environment():
+    # A fresh install must reach the environment users register on; alpha is retired.
+    assert _config.DEFAULT_API_BASE == "https://beta.mimiry.com"
+
+
+def test_unconfigured_api_base_resolves_to_beta(monkeypatch, tmp_path):
+    monkeypatch.delenv("MIMIRY_API_BASE", raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    assert _config.get_config().api_base == "https://beta.mimiry.com"
+
+
+def test_cli_help_names_no_provider():
+    # Provider names are withheld from users; help text must not leak one.
+    for args in (["availability", "--help"], ["session", "create", "--help"], ["--help"]):
+        out = subprocess.run(
+            [sys.executable, "-m", "mimiry._cli", *args],
+            capture_output=True,
+            text=True,
+            check=False,
+        ).stdout
+        assert "verda" not in out.lower() and "nebius" not in out.lower(), args
