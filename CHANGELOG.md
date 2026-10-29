@@ -4,6 +4,13 @@ All notable changes to the `mimiry` SDK are documented here. This project
 roughly follows [Keep a Changelog](https://keepachangelog.com/) and
 [Semantic Versioning](https://semver.org/).
 
+## [0.4.2] — 2026-10-29
+
+### Fixed
+- **The PyPI page shows the SDK's real status.** The README said "Status: alpha — early access"
+  and the package was classified `Development Status :: 3 - Alpha`. Both now say public beta
+  (`4 - Beta`), matching the platform. No code change.
+
 ## [0.4.1] — 2026-10-29
 
 ### Fixed

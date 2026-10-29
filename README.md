@@ -1,6 +1,6 @@
 # mimiry — Python SDK for Mimiry GPU compute
 
-**Status:** alpha — early access
+**Status:** public beta
 **Backend:** beta.mimiry.com
 
 Python-native interface for running serverless cloud GPU jobs on Mimiry, with full control over locality and providers — a decorator-based SDK plus a full-featured CLI for managing sessions and volumes.
