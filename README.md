@@ -3,7 +3,7 @@
 **Status:** public beta
 **Backend:** beta.mimiry.com
 
-Python-native interface for running serverless cloud GPU jobs on Mimiry, with full control over locality and providers — a decorator-based SDK plus a full-featured CLI for managing sessions and volumes.
+Python-native interface for running serverless GPU jobs on Mimiry's European cloud: a decorator-based SDK plus a full-featured CLI for managing sessions and volumes.
 
 ## Install
 
