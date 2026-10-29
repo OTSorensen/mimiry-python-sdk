@@ -1,7 +1,7 @@
 # mimiry — Python SDK for Mimiry GPU compute
 
 **Status:** alpha — early access
-**Backend:** alpha.mimiry.com
+**Backend:** beta.mimiry.com
 
 Python-native interface for running serverless cloud GPU jobs on Mimiry, with full control over locality and providers — a decorator-based SDK plus a full-featured CLI for managing sessions and volumes.
 
@@ -19,7 +19,7 @@ pip install -e .
 
 ## Auth
 
-Running jobs requires a Mimiry account. The SDK authenticates with SSH-JWT — the same SSH key you register on your account at the [Mimiry portal](https://alpha.mimiry.com). The fastest way to get set up is the interactive wizard, which generates a key (if needed), walks you through registering it in the portal, saves the key path *and* the API base URL to `~/.config/mimiry/config.toml` so the SDK works right away (and in every future shell, no restart needed), and verifies the connection. It also exports `MIMIRY_SSH_KEY` to your shell profile for `curl`/shell use:
+Running jobs requires a Mimiry account. The SDK authenticates with SSH-JWT — the same SSH key you register on your account at the [Mimiry platform manager](https://beta.mimiry.com). The fastest way to get set up is the interactive wizard, which generates a key (if needed), walks you through registering it in the portal, saves the key path *and* the API base URL to `~/.config/mimiry/config.toml` so the SDK works right away (and in every future shell, no restart needed), and verifies the connection. It also exports `MIMIRY_SSH_KEY` to your shell profile for `curl`/shell use:
 
 ```bash
 mimiry setup   # alias: mimiry init
@@ -57,7 +57,7 @@ Always check what's currently available before selecting hardware:
 mimiry availability
 ```
 
-Filter with `--gpu-family A100`, `--provider verda`, `--location FIN-02`,
+Filter with `--gpu-family A100`,
 `--min-vram 16`, and/or `--available-only`.
 
 ## Managing sessions
@@ -67,7 +67,7 @@ Run and manage GPU sessions entirely from the CLI:
 ```bash
 # Launch a job (omit --command for an interactive box; --wait blocks until it starts)
 mimiry session create --image nvcr.io/nvidia/pytorch:24.01-py3 \
-    --gpu A100 --provider verda --command "nvidia-smi" --wait
+    --gpu A100 --command "nvidia-smi" --wait
 
 mimiry sessions                 # list recent sessions, newest first
 mimiry sessions --active        # only running / provisioning (i.e. still billing)

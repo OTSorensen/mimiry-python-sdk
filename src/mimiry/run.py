@@ -109,7 +109,6 @@ def run(
         result = mimiry.run(
             image="nvcr.io/nvidia/pytorch:24.01-py3",
             gpu="A100",
-            provider="verda",
             command="nvidia-smi",
         )
         print(result.logs)

@@ -8,9 +8,11 @@ failed session.
 from __future__ import annotations
 
 import inspect
+import subprocess
 import sys
 
 import mimiry
+from mimiry import _config
 
 # ``mimiry.function`` and ``mimiry.run`` are shadowed by the callables the
 # package exports under the same names; reach the modules via sys.modules.
@@ -46,3 +48,34 @@ def test_docstring_examples_do_not_name_a_provider_that_does_not_exist():
         assert doc
         assert "gcp" not in doc
         assert 'gpu="T4"' not in doc
+
+
+def test_default_api_base_is_the_live_environment():
+    # A fresh install must reach the environment users register on; alpha is retired.
+    assert _config.DEFAULT_API_BASE == "https://beta.mimiry.com"
+
+
+def test_unconfigured_api_base_resolves_to_beta(monkeypatch, tmp_path):
+    # Start from a fresh process-global config and an empty config dir, so neither an earlier test's
+    # configure() call nor the developer's own ~/.config/mimiry decides the result.
+    monkeypatch.setattr(_config, "_config", _config.Config())
+    monkeypatch.delenv("MIMIRY_API_BASE", raising=False)
+    monkeypatch.delenv("MIMIRY_SSH_KEY", raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    assert not _config.config_path().exists()
+    assert _config.get_config().api_base == "https://beta.mimiry.com"
+
+
+def test_cli_help_names_no_provider():
+    # Provider names are withheld from users; help text must not leak one.
+    for args in (["availability", "--help"], ["session", "create", "--help"], ["--help"]):
+        proc = subprocess.run(
+            [sys.executable, "-m", "mimiry._cli", *args],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        # A CLI that fails to start prints no help, and empty output would pass the check below.
+        assert proc.returncode == 0, (args, proc.stderr)
+        assert "usage: mimiry" in proc.stdout, args
+        assert "verda" not in proc.stdout.lower() and "nebius" not in proc.stdout.lower(), args

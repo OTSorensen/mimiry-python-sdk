@@ -26,7 +26,7 @@ python3 -c "import mimiry; print(mimiry.__version__)"
 ```
 
 - [x] `mimiry --version` matches `mimiry.__version__` and `pyproject.toml`
-- [x] `mimiry config` shows `api_base: https://alpha.mimiry.com`
+- [x] `mimiry config` shows `api_base: https://beta.mimiry.com`
 
 **Before starting a paid section, confirm nothing is already running:**
 
@@ -55,9 +55,9 @@ mimiry volume list
 |---|---|---|
 | - [ ] | `mimiry availability` | all GPU models |
 | - [ ] | `mimiry availability --gpu-family A100` | only A100 |
-| - [ ] | `mimiry availability --provider verda --available-only` | only available verda GPUs |
+| - [ ] | `mimiry availability --available-only` | only GPUs available right now |
 | - [ ] | `mimiry availability --min-vram 40` | only ≥40 GB cards |
-| - [ ] | `mimiry availability --location europe-west4-a` | only that location |
+| - [ ] | `mimiry availability --location <a location listed above>` | only that location |
 
 ## 3. Sessions — read commands (free)
 
@@ -72,12 +72,13 @@ mimiry volume list
 
 ## 4. Sessions — create / logs / ssh / terminate 💸
 
-> Uses a real A100 on verda. Cold start is 5–8 min, most of it the image pull.
+> Uses a real GPU: pick the cheapest single-GPU type from `mimiry availability`. Cold start is
+> 3–8 min, most of it the image pull.
 
 ```bash
 mimiry session create \
   --image nvcr.io/nvidia/pytorch:24.01-py3 \
-  --gpu A100 --provider verda --location FIN-02 \
+  --gpu <type from mimiry availability> --location <its location> \
   --command "nvidia-smi && echo DONE" --wait
 ```
 

@@ -1,7 +1,7 @@
 """Pre-create validation of the requested GPU/provider/location.
 
 The scheduler rejects an impossible ``gpu``/``provider`` pairing only *after*
-a session is created — e.g. asking for a ``T4`` from ``verda`` (which doesn't
+a session is created — e.g. asking for a ``T4`` from a provider (which doesn't
 carry it) fails the session with ``unsupported GPU type "T4"`` after a
 provisioning round-trip. This module catches that locally, before the POST,
 and turns it into an actionable error that names the providers which *do*

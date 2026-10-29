@@ -4,10 +4,10 @@ The SDK's primary surface is the Python decorator, but the CLI lets users
 verify auth and inspect/manage sessions and volumes without writing code:
 
     $ mimiry balance
-    $ mimiry availability --gpu-family A100 --provider verda
+    $ mimiry availability --gpu-family A100 --available-only
     $ mimiry sessions --active
     $ mimiry session create --image docker.io/pytorch/pytorch:2.4.0-cuda12.1-cudnn9-runtime \\
-          --gpu A100_40G_SXM --provider verda --command "nvidia-smi" --wait
+          --gpu A100_40G_SXM --command "nvidia-smi" --wait
     $ mimiry session logs <id> --follow
     $ mimiry session ssh <id>
     $ mimiry session terminate <id>
@@ -488,7 +488,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="mimiry", description=__doc__.splitlines()[0])
     parser.add_argument("--version", action="version", version=f"mimiry {__version__}")
     parser.add_argument("--ssh-key", help="Path to SSH private key (overrides MIMIRY_SSH_KEY).")
-    parser.add_argument("--api-base", help="API base URL (default: alpha.mimiry.com).")
+    parser.add_argument("--api-base", help="API base URL (default: beta.mimiry.com).")
     subs = parser.add_subparsers(dest="cmd")
 
     def _cmd_help(_a: argparse.Namespace) -> int:
@@ -506,7 +506,7 @@ def main(argv: list[str] | None = None) -> int:
 
     avail = subs.add_parser("availability", help="Show GPU availability (no auth).")
     avail.add_argument("--gpu-family", help="Filter, e.g. A100 or H100.")
-    avail.add_argument("--provider", help="Filter by provider, e.g. verda.")
+    avail.add_argument("--provider", help="Filter by provider.")
     avail.add_argument("--location", help="Filter by location, e.g. FIN-02.")
     avail.add_argument("--min-vram", type=int, metavar="GB", help="Minimum VRAM in GB.")
     avail.add_argument("--available-only", action="store_true", help="Only currently-available GPUs.")
@@ -563,7 +563,7 @@ def main(argv: list[str] | None = None) -> int:
              "the catalog changes, and every session created without noticing fails.",
     )
     s_create.add_argument("--gpu-count", type=int, default=1, help="GPU count (default 1).")
-    s_create.add_argument("--provider", help="Provider hint, e.g. verda.")
+    s_create.add_argument("--provider", help="Provider hint.")
     s_create.add_argument(
         "--location",
         help="Location to run in, e.g. FIN-02. Defaults to the location of an "
