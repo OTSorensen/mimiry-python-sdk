@@ -18,8 +18,7 @@ name the platform is careful to hide.
 ## Goal
 
 A fresh install reaches the environment users register on, with no extra
-configuration; a user whose config file still names the retired host is told
-how to move; and nothing the SDK prints or documents names a provider.
+configuration, and nothing the SDK prints or documents names a provider.
 
 ## Acceptance criteria
 
@@ -33,15 +32,7 @@ how to move; and nothing the SDK prints or documents names a provider.
    source strings).
 5. The `mimiry.run` docstring, the CLI module examples and the README name no
    provider.
-6. A config file saved by 0.4.0's `mimiry setup` names the retired host. That
-   value is kept (the user's key is registered there), and resolving it raises
-   one `RetiredApiBaseWarning` saying how to move to the live host and how to
-   stay. A retired host set through `MIMIRY_API_BASE` is a deliberate choice and
-   does not warn; a saved live host does not warn.
-7. The CLI prints that warning as a single `warning: ...` line, without
-   Python's file, line and category prefix.
-8. The changelog's 0.4.1 entry carries the upgrade note for setup users.
-9. The package version is 0.4.1 in `pyproject.toml` and `mimiry.__version__`,
+6. The package version is 0.4.1 in `pyproject.toml` and `mimiry.__version__`,
    and the changelog carries a 0.4.1 entry describing both fixes.
 
 ## Non-goals
@@ -50,8 +41,9 @@ how to move; and nothing the SDK prints or documents names a provider.
   provider filtering remains; only the example naming a provider goes.
 - Publishing to PyPI. The release is a separate manual step
   (`docs/releasing.md`).
-- Rewriting a saved retired host to the live one. The user's key is
-  registered on the host they saved, so a silent switch would break them.
+- An upgrade path for a config file that `mimiry setup` saved with the old
+  host. No users are on that environment, so there is no one to migrate; a
+  saved host keeps winning over the default, as before.
 - Changing the test fixtures that use provider names or the old host; they
   exercise parsing and precedence, are not shipped help text, and the old host
   there is an arbitrary value proving an explicit setting wins.
@@ -60,8 +52,8 @@ how to move; and nothing the SDK prints or documents names a provider.
 
 `tests/test_defaults.py` pins criteria 1, 2 and 4 (the help test asserts the
 CLI exited 0 and printed usage before checking for provider names);
-`tests/test_config.py` covers precedence (criterion 3) and the warning
-(criteria 6 and 7). Each new test was shown to fail with its fix removed. Live check after release: in a fresh venv,
+`tests/test_config.py` covers precedence (criterion 3). The hardened help test
+was shown to fail on a CLI that cannot start. Live check after release: in a fresh venv,
 `pip install mimiry==0.4.1`, then with no `MIMIRY_API_BASE` set,
 `mimiry whoami` must report `https://beta.mimiry.com` and succeed with a key
 registered on beta.

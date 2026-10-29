@@ -10,8 +10,7 @@ Narrative and history belong in `CHANGELOG.md` and the bug reports, never here.
 
 - Live API host: `https://beta.mimiry.com`. `alpha.mimiry.com` is being
   retired and `softlaunch.mimiry.com` is dead — never reintroduce either as a
-  default. A default the SDK writes to the user's config file stops being a
-  default: changing it needs an upgrade path for the saved value.
+  default.
 - Provider names are withheld from users: no help text, example, docstring or
   doc names one.
 - Source layout is `src/`-based: `src/mimiry/`, tests in `tests/`.
