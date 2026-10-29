@@ -8,8 +8,12 @@ Narrative and history belong in `CHANGELOG.md` and the bug reports, never here.
 
 ## Environment facts
 
-- Live API host: `https://alpha.mimiry.com`. The OpenAPI specs'
-  `softlaunch.mimiry.com` is **dead** — never reintroduce it as a default.
+- Live API host: `https://beta.mimiry.com`. `alpha.mimiry.com` is being
+  retired and `softlaunch.mimiry.com` is dead — never reintroduce either as a
+  default. A default the SDK writes to the user's config file stops being a
+  default: changing it needs an upgrade path for the saved value.
+- Provider names are withheld from users: no help text, example, docstring or
+  doc names one.
 - Source layout is `src/`-based: `src/mimiry/`, tests in `tests/`.
 - Supported Python: 3.10+. `tomllib` is 3.11+, so `_config.py` carries a
   3.10 fallback parser — keep both paths working.

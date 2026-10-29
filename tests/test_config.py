@@ -167,3 +167,37 @@ def test_precedence_api_base_explicit_configure_beats_file(monkeypatch):
 
 def test_api_base_defaults_when_nothing_set():
     assert get_config().api_base == cfg_mod.DEFAULT_API_BASE
+
+
+# ── a saved retired host: kept, with a warning that says how to move ──
+
+
+def test_saved_retired_api_base_is_kept_and_warns():
+    # 0.4.0's `mimiry setup` saved alpha, and the user's key is registered there: keep it, but say so.
+    save_config(api_base="https://alpha.mimiry.com")
+    with pytest.warns(cfg_mod.RetiredApiBaseWarning, match="mimiry setup"):
+        assert get_config().api_base == "https://alpha.mimiry.com"
+
+
+def test_saved_current_api_base_does_not_warn(recwarn):
+    save_config(api_base="https://beta.mimiry.com")
+    assert get_config().api_base == "https://beta.mimiry.com"
+    assert not [w for w in recwarn if issubclass(w.category, cfg_mod.RetiredApiBaseWarning)]
+
+
+def test_retired_api_base_from_env_does_not_warn(monkeypatch, recwarn):
+    # Setting MIMIRY_API_BASE is a deliberate choice, and the warning names it as the way to stay.
+    save_config(api_base="https://alpha.mimiry.com")
+    monkeypatch.setenv("MIMIRY_API_BASE", "https://alpha.mimiry.com")
+    assert get_config().api_base == "https://alpha.mimiry.com"
+    assert not [w for w in recwarn if issubclass(w.category, cfg_mod.RetiredApiBaseWarning)]
+
+
+def test_cli_prints_the_retired_host_warning_as_one_plain_line(capsys):
+    from mimiry import _cli
+
+    save_config(ssh_key_path="/tmp/k", api_base="https://alpha.mimiry.com")
+    assert _cli.main(["config"]) == 0
+    err = capsys.readouterr().err
+    assert err.startswith("warning: The API base saved in"), err
+    assert "RetiredApiBaseWarning" not in err and ".py:" not in err, err

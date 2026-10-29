@@ -12,6 +12,11 @@ roughly follows [Keep a Changelog](https://keepachangelog.com/) and
   registered a key on beta got "SSH signature verification failed" from every command until
   they set `MIMIRY_API_BASE`. An explicit `--api-base`, `MIMIRY_API_BASE` or the saved config
   file still wins.
+- **Upgrading from 0.4.0 after running `mimiry setup`:** setup saved `alpha.mimiry.com` in
+  `~/.config/mimiry/config.toml`, and a saved host beats the default, so upgrading alone keeps you
+  on alpha (where your key is registered). Every command now says so in one warning line. To
+  move: register your SSH key at https://beta.mimiry.com, then run `mimiry setup` again. To stay
+  on alpha for now, set `MIMIRY_API_BASE=https://alpha.mimiry.com`, which also silences the warning.
 - **No provider names in help text or examples.** `--provider` help, the CLI module examples,
   `mimiry.run` docstring and the README no longer name a provider; provider names are withheld
   from users.

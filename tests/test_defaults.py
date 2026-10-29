@@ -56,18 +56,26 @@ def test_default_api_base_is_the_live_environment():
 
 
 def test_unconfigured_api_base_resolves_to_beta(monkeypatch, tmp_path):
+    # Start from a fresh process-global config and an empty config dir, so neither an earlier test's
+    # configure() call nor the developer's own ~/.config/mimiry decides the result.
+    monkeypatch.setattr(_config, "_config", _config.Config())
     monkeypatch.delenv("MIMIRY_API_BASE", raising=False)
+    monkeypatch.delenv("MIMIRY_SSH_KEY", raising=False)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    assert not _config.config_path().exists()
     assert _config.get_config().api_base == "https://beta.mimiry.com"
 
 
 def test_cli_help_names_no_provider():
     # Provider names are withheld from users; help text must not leak one.
     for args in (["availability", "--help"], ["session", "create", "--help"], ["--help"]):
-        out = subprocess.run(
+        proc = subprocess.run(
             [sys.executable, "-m", "mimiry._cli", *args],
             capture_output=True,
             text=True,
             check=False,
-        ).stdout
-        assert "verda" not in out.lower() and "nebius" not in out.lower(), args
+        )
+        # A CLI that fails to start prints no help, and empty output would pass the check below.
+        assert proc.returncode == 0, (args, proc.stderr)
+        assert "usage: mimiry" in proc.stdout, args
+        assert "verda" not in proc.stdout.lower() and "nebius" not in proc.stdout.lower(), args

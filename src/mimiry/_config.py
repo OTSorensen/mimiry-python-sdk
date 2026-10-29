@@ -28,10 +28,15 @@ from __future__ import annotations
 import os
 import stat
 import tempfile
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 
 DEFAULT_API_BASE = "https://beta.mimiry.com"
+# The environment 0.4.0 used as its default. `mimiry setup` saved whatever default it resolved, so users who
+# set up on 0.4.0 carry this host in their config file. It is kept (their key is registered there), not
+# rewritten, and a warning tells them how to move.
+RETIRED_API_BASES = frozenset({"https://alpha.mimiry.com"})
 DEFAULT_TIMEOUT_SECONDS = 1800  # 30 min — must accommodate ~2 min cold start + work
 
 # Group/other WRITABLE bits. We reject a config carrying these on read: an
@@ -39,6 +44,10 @@ DEFAULT_TIMEOUT_SECONDS = 1800  # 30 min — must accommodate ~2 min cold start 
 # host) they control. Readability is *not* checked — the file holds only a
 # path and a URL, neither of which is secret.
 _INSECURE_WRITE_BITS = stat.S_IWGRP | stat.S_IWOTH  # 0o022
+
+
+class RetiredApiBaseWarning(UserWarning):
+    """The API base saved in the config file is an environment that is being retired."""
 
 
 @dataclass
@@ -247,4 +256,13 @@ def get_config() -> Config:
         file_api_base = read_api_base()
         if file_api_base:
             _config.api_base = file_api_base
+            if file_api_base in RETIRED_API_BASES:
+                warnings.warn(
+                    f"The API base saved in {config_path()} is {file_api_base}, the environment being "
+                    f"retired. To move: register your SSH key at {DEFAULT_API_BASE}, then run "
+                    f"`mimiry setup` again. To stay for now, set "
+                    f"MIMIRY_API_BASE={file_api_base} (this silences the warning).",
+                    RetiredApiBaseWarning,
+                    stacklevel=2,
+                )
     return _config

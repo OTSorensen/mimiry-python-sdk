@@ -22,6 +22,7 @@ import json
 import os
 import sys
 import time
+import warnings
 from datetime import datetime
 
 from mimiry import __version__
@@ -484,6 +485,10 @@ def _add_list_args(p: argparse.ArgumentParser) -> None:
     p.set_defaults(func=cmd_session_list)
 
 
+def _show_warning(message, category, filename, lineno, file=None, line=None) -> None:
+    print(f"warning: {message}", file=sys.stderr)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="mimiry", description=__doc__.splitlines()[0])
     parser.add_argument("--version", action="version", version=f"mimiry {__version__}")
@@ -629,13 +634,16 @@ def main(argv: list[str] | None = None) -> int:
     if args.ssh_key or args.api_base:
         configure(ssh_key_path=args.ssh_key, api_base=args.api_base)
 
-    try:
-        return args.func(args)
-    except KeyboardInterrupt:
-        return 130
-    except Exception as e:
-        print(f"error: {e}", file=sys.stderr)
-        return 1
+    # Warnings reach a CLI user as one plain line, not Python's "file:line: Category:" format.
+    with warnings.catch_warnings():
+        warnings.showwarning = _show_warning
+        try:
+            return args.func(args)
+        except KeyboardInterrupt:
+            return 130
+        except Exception as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 1
 
 
 if __name__ == "__main__":
