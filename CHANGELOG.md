@@ -4,7 +4,7 @@ All notable changes to the `mimiry` SDK are documented here. This project
 roughly follows [Keep a Changelog](https://keepachangelog.com/) and
 [Semantic Versioning](https://semver.org/).
 
-## [0.4.1] — unreleased
+## [0.4.1] — 2026-10-29
 
 ### Fixed
 - **A fresh install talks to the live environment.** The default API base is now
