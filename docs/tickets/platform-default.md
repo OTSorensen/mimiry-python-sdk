@@ -37,8 +37,9 @@ and the package presents itself as stable.
 7. The package version is 0.5.0 in `pyproject.toml` and `mimiry.__version__`,
    and the changelog carries a 0.5.0 entry that tells beta users to register
    their key on the platform and re-run `mimiry setup`.
-8. `CLAUDE.md` and `TESTING.md` name `platform.mimiry.com` as the live host and
-   record beta as retired.
+8. `CLAUDE.md` names `platform.mimiry.com` as the live host and records beta as
+   retired; `TESTING.md` expects `mimiry config` to show
+   `api_base: https://platform.mimiry.com`.
 
 ## Non-goals
 
@@ -56,8 +57,11 @@ and the package presents itself as stable.
 ## Verification
 
 `tests/test_defaults.py` pins criteria 1, 2, 4 and 5 (the help test asserts the
-CLI exited 0 and printed usage before any negative check); `tests/test_config.py`
-covers precedence (criterion 3). Each of the default host, the classifier and
+CLI exited 0 and printed usage before any negative check, and a second test
+swaps `DEFAULT_API_BASE` for a sentinel to prove the help text is derived from
+it). Criterion 3 is unchanged code, covered by the existing `test_precedence_*`
+tests in `tests/test_config.py` (explicit beats env beats saved file, for both
+the key path and `api_base`), which pass on this branch. Each of the default host, the classifier and
 the README status line was reverted in turn and the suite failed each time.
 Live check: with an empty config directory and no `MIMIRY_API_BASE`,
 `mimiry whoami` reports `https://platform.mimiry.com` and succeeds with a key

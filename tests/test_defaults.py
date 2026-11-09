@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 
 import mimiry
+import mimiry._cli  # registers mimiry._cli in sys.modules
 from mimiry import _config
 
 # ``mimiry.function`` and ``mimiry.run`` are shadowed by the callables the
@@ -107,3 +108,16 @@ def test_package_is_marked_stable():
     readme = (root / "README.md").read_text()
     assert "**Status:** stable" in readme
     assert "beta" not in readme.lower()
+
+
+def test_cli_help_reads_the_host_from_default_api_base(monkeypatch, capsys):
+    # Swap the constant for a sentinel: only help text built from DEFAULT_API_BASE can show it.
+    cli_mod = sys.modules["mimiry._cli"]
+    monkeypatch.setattr(cli_mod, "DEFAULT_API_BASE", "https://sentinel.invalid")
+    try:
+        cli_mod.main(["--help"])
+    except SystemExit as exc:
+        assert exc.code == 0
+    out = capsys.readouterr().out
+    assert "usage: mimiry" in out
+    assert "(default: sentinel.invalid)" in out
