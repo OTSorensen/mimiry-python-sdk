@@ -4,6 +4,19 @@ All notable changes to the `mimiry` SDK are documented here. This project
 roughly follows [Keep a Changelog](https://keepachangelog.com/) and
 [Semantic Versioning](https://semver.org/).
 
+## [0.5.0] — 2026-11-02
+
+### Changed
+- **A fresh install talks to version 1 of the platform.** The default API base is now
+  `https://platform.mimiry.com`; 0.4.x defaulted to `beta.mimiry.com`, which is no longer
+  supported. SSH keys do not carry over between environments: register your key in the
+  platform manager at `https://platform.mimiry.com`, then run `mimiry setup` again. A host
+  saved in `~/.config/mimiry/config.toml` still wins over the default, so a config saved
+  against beta keeps pointing there until setup is re-run or its `api_base` line is changed.
+  An explicit `--api-base` or `MIMIRY_API_BASE` also still wins.
+- **The SDK is marked stable.** The README status and the PyPI classifier
+  (`Development Status :: 5 - Production/Stable`) now match version 1 of the platform.
+
 ## [0.4.2] — 2026-10-29
 
 ### Fixed

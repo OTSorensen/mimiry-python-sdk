@@ -1,7 +1,7 @@
 # mimiry — Python SDK for Mimiry GPU compute
 
-**Status:** public beta
-**Backend:** beta.mimiry.com
+**Status:** stable (version 1 of the platform)
+**Backend:** platform.mimiry.com
 
 Python-native interface for running serverless GPU jobs on Mimiry's European cloud: a decorator-based SDK plus a full-featured CLI for managing sessions and volumes.
 
@@ -19,7 +19,7 @@ pip install -e .
 
 ## Auth
 
-Running jobs requires a Mimiry account. The SDK authenticates with SSH-JWT — the same SSH key you register on your account at the [Mimiry platform manager](https://beta.mimiry.com). The fastest way to get set up is the interactive wizard, which generates a key (if needed), walks you through registering it in the portal, saves the key path *and* the API base URL to `~/.config/mimiry/config.toml` so the SDK works right away (and in every future shell, no restart needed), and verifies the connection. It also exports `MIMIRY_SSH_KEY` to your shell profile for `curl`/shell use:
+Running jobs requires a Mimiry account. The SDK authenticates with SSH-JWT — the same SSH key you register on your account at the [Mimiry platform manager](https://platform.mimiry.com). The fastest way to get set up is the interactive wizard, which generates a key (if needed), walks you through registering it in the portal, saves the key path *and* the API base URL to `~/.config/mimiry/config.toml` so the SDK works right away (and in every future shell, no restart needed), and verifies the connection. It also exports `MIMIRY_SSH_KEY` to your shell profile for `curl`/shell use:
 
 ```bash
 mimiry setup   # alias: mimiry init

@@ -28,7 +28,7 @@ from mimiry import __version__
 from mimiry._auth import get_token
 from mimiry._availability import preflight_gpu_availability
 from mimiry._client import MimiryClient
-from mimiry._config import configure, get_config
+from mimiry._config import DEFAULT_API_BASE, configure, get_config
 from mimiry._session import (
     ERROR_STATES,
     READY_STATE,
@@ -488,7 +488,10 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="mimiry", description=__doc__.splitlines()[0])
     parser.add_argument("--version", action="version", version=f"mimiry {__version__}")
     parser.add_argument("--ssh-key", help="Path to SSH private key (overrides MIMIRY_SSH_KEY).")
-    parser.add_argument("--api-base", help="API base URL (default: beta.mimiry.com).")
+    parser.add_argument(
+        "--api-base",
+        help=f"API base URL (default: {DEFAULT_API_BASE.removeprefix('https://')}).",
+    )
     subs = parser.add_subparsers(dest="cmd")
 
     def _cmd_help(_a: argparse.Namespace) -> int:

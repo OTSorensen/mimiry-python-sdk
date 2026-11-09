@@ -26,7 +26,7 @@ python3 -c "import mimiry; print(mimiry.__version__)"
 ```
 
 - [x] `mimiry --version` matches `mimiry.__version__` and `pyproject.toml`
-- [x] `mimiry config` shows `api_base: https://beta.mimiry.com`
+- [x] `mimiry config` shows `api_base: https://platform.mimiry.com`
 
 **Before starting a paid section, confirm nothing is already running:**
 
