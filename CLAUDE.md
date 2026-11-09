@@ -8,9 +8,9 @@ Narrative and history belong in `CHANGELOG.md` and the bug reports, never here.
 
 ## Environment facts
 
-- Live API host: `https://beta.mimiry.com`. `alpha.mimiry.com` is being
-  retired and `softlaunch.mimiry.com` is dead — never reintroduce either as a
-  default.
+- Live API host: `https://platform.mimiry.com` (version 1). `beta.mimiry.com`
+  and `alpha.mimiry.com` are retired and `softlaunch.mimiry.com` is dead —
+  never reintroduce any of them as a default.
 - Provider names are withheld from users: no help text, example, docstring or
   doc names one.
 - Source layout is `src/`-based: `src/mimiry/`, tests in `tests/`.
